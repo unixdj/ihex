@@ -1,0 +1,254 @@
+// Copyright 2014 Vadim Vygonets
+//
+// This package is free software. It comes without any warranty, to
+// the extent permitted by applicable law. You can redistribute it
+// and/or modify it under the terms of the Do What The Fuck You Want
+// To Public License, Version 2, as published by Sam Hocevar. See
+// the LICENSE file or http://sam.zoy.org/wtfpl/ for more details.
+
+/*
+Package ihex implements access to Intel HEX files.
+
+IHEX files consist of records representing instructions for a PROM
+programmer to write data to memory locations (referred to here as "the
+address space") and set certain registers ("the start address"), along
+with record types this package only handles internally (EOF and extended
+addressing).  As these records may appear in a file in any order and
+are defined to have peculiar corner cases, this package only presents
+the user a simplified view of the address space, losing details of a
+particular representation on input and generating conservative output.
+Documentation for (*IHex).ReadFrom describes the abstraction in more
+detail.
+
+IHEX files come in three formats.  The format termed "8-bit" has,
+naturally, contiguous 16-bit address space (64KB), "16-bit" format has
+crazy Intel-segmeted 20-bit address space (1MB) and "32-bit" has 32-bit
+(4GB) addressing which is contiguous but the high 16 bits of the address
+are still set separately.  This package only allows Extended Segment
+Address and Start Segment Address records in 16-bit files and Extended
+Linear Address and Start Linear Address records in 32-bit files, and
+disallows zero-length Data records.
+*/
+package ihex
+
+import (
+	"bufio"
+	"io"
+	"sort"
+)
+
+// IHEX file formats
+const (
+	FormatAuto  = iota // Auto-detect format
+	Format8bit         // 8-bit format, 16-bit address space
+	Format16bit        // 16-bit format, 20-bit address space
+	Format32bit        // 32-bit format, 32-bit address space
+)
+
+// record types
+const (
+	dataRec             = iota // Data
+	eofRec                     // End of File
+	extSegmentAddrRec          // Extended Segment Address
+	startSegmentAddrRec        // Start Segment Address
+	extLinearAddrRec           // Extended Linear Address
+	startLinearAddrRec         // Start Linear Address
+)
+
+// field offsets within record
+const (
+	lenOff  = 0 // RECLEN
+	addrOff = 1 // LOAD OFFSET
+	typeOff = 3 // RECTYP
+	dataOff = 4 // INFO or DATA
+	// last byte: CHKSUM
+)
+
+// Chunk represents a contiguous area in the IHEX address space.
+type Chunk struct {
+	Addr uint32
+	Data []byte
+}
+
+// end returns the address at the end of c.
+func (c Chunk) end() int64 {
+	return int64(c.Addr) + int64(len(c.Data))
+}
+
+// overlaps returns true if two chunks overlap or are adjacent.
+// XXX misnomer
+func (c Chunk) overlaps(cc Chunk) bool {
+	return int64(c.Addr) <= cc.end() && int64(cc.Addr) <= c.end()
+}
+
+// overwrite returns a chunk with data from under and over, the latter
+// taking the precedence over the former.
+func (under Chunk) overwrite(over Chunk) Chunk {
+	if over.Addr == under.Addr {
+		if over.end() >= under.end() {
+			return over
+		}
+		copy(under.Data, over.Data)
+		return under
+	}
+	if over.Addr > under.Addr {
+		if over.end() <= under.end() {
+			copy(under.Data[over.Addr-under.Addr:], over.Data)
+		} else {
+			under.Data = append(under.Data[:over.Addr-under.Addr],
+				over.Data...)
+		}
+		return under
+	}
+	if under.end() > over.end() {
+		over.Data = append(over.Data,
+			under.Data[:over.end()-int64(under.Addr)]...)
+	}
+	return over
+}
+
+// ChunkList is a slice of chunks.
+type ChunkList []Chunk
+
+// find finds the first chunk whose end is at or after addr in a
+// sorted slice cl.
+func (cl ChunkList) find(addr int64) int {
+	return sort.Search(len(cl),
+		func(i int) bool { return cl[i].end() >= addr })
+}
+
+// join joins adjacent and overlapping chunks in a sorted slice cl,
+// starting at the index i.  In case of overlapping chunks, data in
+// the one with the lower index take precedence.
+func (cl *ChunkList) join(i int) {
+	for i < len(*cl)-1 && (*cl)[i].overlaps((*cl)[i+1]) {
+		(*cl)[i] = (*cl)[i+1].overwrite((*cl)[i])
+		(*cl) = append((*cl)[:i], (*cl)[i+1:]...)
+	}
+}
+
+// add adds data in c to the address space represented by a
+// sorted slice cl.
+func (cl *ChunkList) add(c Chunk) {
+	i := cl.find(int64(c.Addr))
+	if i < len(*cl) && (*cl)[i].overlaps(c) {
+		(*cl)[i] = (*cl)[i].overwrite(c)
+		cl.join(i)
+	} else {
+		(*cl) = append((*cl), c)
+		if i < len(*cl) {
+			copy((*cl)[i+1:], (*cl)[i:])
+			(*cl)[i] = c
+		}
+	}
+}
+
+// normal returns true if cl is a sorted list of nonadjacent
+// non-zero-legth chunks.
+func (cl ChunkList) normal() bool {
+	for i := 0; i < len(cl)-1; i++ {
+		if cl[i].end() >= int64(cl[i+1].Addr) ||
+			len(cl[i+1].Data) == 0 {
+			return false
+		}
+	}
+	return len(cl) == 0 || len(cl[0].Data) != 0
+}
+
+// Normalize returns a sorted list of nonadjacent non-zero-legth
+// chunks representing the address space as it would look after the
+// data in ChunkList would be written to it sequentially.
+// Normalize may mutate data in place.
+func (cl *ChunkList) Normalize() {
+	if cl.normal() {
+		return
+	}
+	sorted := make(ChunkList, 0, len(*cl))
+	for _, v := range *cl {
+		if len(v.Data) != 0 {
+			sorted.add(v)
+		}
+	}
+	*cl = sorted
+}
+
+// IHex represents the contents of an IHEX file.
+type IHex struct {
+	// Format is the file format.  Legal values are Format8bit,
+	// Format16bit and Format32bit for writing, and the above and
+	// FormatAuto for reading.
+	Format byte
+
+	// Start is the "start address".  For 32-bit format it
+	// symbolizes the contents of EIP on i386, and for 16-bit,
+	// CS:IP on 8086.
+	Start uint32
+
+	// Chunks are the data in the address space.
+	Chunks ChunkList
+}
+
+/*
+ReadFrom reads an IHEX file from r, filling ix.  ReadFrom returns nil
+on success, ErrSyntax or ErrChecksum in case of invalid input
+and anything else on read errors.  ReadFrom may overread r.
+
+If ix.Format is FormatAuto and a record specific to 16-bit or 32-bit
+format is encoutered, ix.Format is set accordingly.
+
+ix.Chunks is set to a sorted list of nonadjacent contiguous data areas
+representing programmed areas in a (potentially sparse) address space of
+a target machine, with later writes overwriting results of earlier ones.
+This does not necessarily represent the behaviour of actual hardware;
+e.g., a location in flash memory contains conjunction (binary AND) of
+all values written to it since last erase.  If ix.Chunks is non-empty
+before calling ReadFrom, it is normalized to allow interleaving reads
+from several files with direct data manipulation.
+
+If any Start Segment/Linear Address records are encountered, ix.Start
+is set to the value in the last such record.
+*/
+func (ix *IHex) ReadFrom(r io.Reader) error {
+	var (
+		p = &parser{data: ix}
+		s = bufio.NewScanner(r)
+	)
+	ix.Chunks.Normalize()
+	for s.Scan() {
+		if err := p.parseLine(s.Text()); err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+	}
+	if err := s.Err(); err != nil {
+		return err
+	}
+	return ErrSyntax
+}
+
+// WriteTo writes data from ix to an IHEX file.  Using Writer of the
+// format specified by ix.Format (which may not be FormatAuto), it
+// first writes ix.Chunks in order without any normalization, followed
+// by ix.Start unless it's zero.
+func (ix *IHex) WriteTo(w io.Writer) error {
+	xw, err := NewWriter(w, ix.Format)
+	if err != nil {
+		return err
+	}
+	for _, v := range ix.Chunks {
+		if _, err = xw.Seek(int64(v.Addr), 0); err != nil {
+			return err
+		}
+		if _, err = xw.Write(v.Data); err != nil {
+			return err
+		}
+	}
+	if ix.Start != 0 {
+		if err = xw.WriteStart(ix.Start); err != nil {
+			return err
+		}
+	}
+	return xw.Close()
+}
