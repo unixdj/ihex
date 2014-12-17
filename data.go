@@ -26,8 +26,7 @@ crazy Intel-segmeted 20-bit address space (1MB) and "32-bit" has 32-bit
 (4GB) addressing which is contiguous but the high 16 bits of the address
 are still set separately.  This package only allows Extended Segment
 Address and Start Segment Address records in 16-bit files and Extended
-Linear Address and Start Linear Address records in 32-bit files, and
-disallows zero-length Data records.
+Linear Address and Start Linear Address records in 32-bit files.
 */
 package ihex
 
@@ -130,6 +129,9 @@ func (cl *ChunkList) join(i int) {
 // add adds data in c to the address space represented by a
 // sorted slice cl.
 func (cl *ChunkList) add(c Chunk) {
+	if len(c.Data) == 0 {
+		return
+	}
 	i := cl.find(int64(c.Addr))
 	if i < len(*cl) && (*cl)[i].overlaps(c) {
 		(*cl)[i] = (*cl)[i].overwrite(c)
@@ -165,9 +167,7 @@ func (cl *ChunkList) Normalize() {
 	}
 	sorted := make(ChunkList, 0, len(*cl))
 	for _, v := range *cl {
-		if len(v.Data) != 0 {
-			sorted.add(v)
-		}
+		sorted.add(v)
 	}
 	*cl = sorted
 }

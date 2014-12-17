@@ -103,9 +103,6 @@ func (p *parser) parseLine(s string) error {
 	}
 	switch buf[typeOff] {
 	case dataRec:
-		if len(data) == 0 {
-			return ErrSyntax
-		}
 		if addr+uint16(len(data))-1 < addr {
 			// For Data records whose data's addresses overflow
 			// 16-bit register, in 8-bit and 32-bit format the data
