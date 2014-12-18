@@ -180,11 +180,12 @@ type IHex struct {
 	Format byte
 
 	// Start is the "start address".  For 32-bit format it
-	// symbolizes the contents of EIP on i386, and for 16-bit,
-	// CS:IP on 8086.
+	// symbolizes the contents of EIP on 80386, and for 16-bit,
+	// the pair of 16-bit registers CS:IP on 8086.  8-bit format
+	// does not support setting a start address.
 	Start uint32
 
-	// Chunks are the data in the address space.
+	// Chunks are the data written to the address space.
 	Chunks ChunkList
 }
 
@@ -193,8 +194,12 @@ ReadFrom reads an IHEX file from r, filling ix.  ReadFrom returns nil
 on success, ErrSyntax or ErrChecksum in case of invalid input
 and anything else on read errors.  ReadFrom may overread r.
 
-If ix.Format is FormatAuto and a record specific to 16-bit or 32-bit
-format is encoutered, ix.Format is set accordingly.
+ix.Format defines the format of the file being read.  If ReadFrom is
+called with ix.Format equal to FormatAuto (zero value) and a record
+specific to 16-bit or 32-bit format is encoutered, it is set accordingly.
+Due to different semantics of Data records spanning 64KB address
+boundaries, such records are disallowed with FormatAuto (however, one
+shouldn't expect to encounter such records the wild).
 
 ix.Chunks is set to a sorted list of nonadjacent contiguous data areas
 representing programmed areas in a (potentially sparse) address space of
@@ -231,7 +236,8 @@ func (ix *IHex) ReadFrom(r io.Reader) error {
 // WriteTo writes data from ix to an IHEX file.  Using Writer of the
 // format specified by ix.Format (which may not be FormatAuto), it
 // first writes ix.Chunks in order without any normalization, followed
-// by ix.Start unless it's zero.
+// by ix.Start unless it's zero.  ix.Start must be zero for 8-bit
+// format files.
 func (ix *IHex) WriteTo(w io.Writer) error {
 	xw, err := NewWriter(w, ix.Format)
 	if err != nil {

@@ -207,10 +207,10 @@ func (w *Writer) WriteStart(addr uint32) error {
 }
 
 // Seek causes the next Write to write data to the specified address
-// in the address space.  Its arguments are compliant to the io.Seeker
-// interface.  If the resulting address is out of the legal address
-// space for w's format, an error is returned.  Seek flushes the write
-// buffer but otherwise does not generate any records.
+// in the address space.  Its arguments are compliant with the
+// io.Seeker interface.  If the resulting address is out of the legal
+// address space for w's format, an error is returned.  Seek flushes
+// the write buffer but otherwise does not generate any records.
 func (w *Writer) Seek(offset int64, whence int) (int64, error) {
 	if w.closed {
 		return 0, ErrClosed

@@ -15,7 +15,9 @@ import (
 	"strings"
 )
 
-// Parser is an IHEX parser.
+// Parser is an IHEX parser.  Format is set in data, which also holds
+// the result of parsing.  segment is zero for 8-bit format, Segment
+// Base Address for 16-bit and Upper Linear Base Address for 32-bit.
 type parser struct {
 	data    *IHex  // result
 	segment uint16 // Segment Base Address or Upper Linear Base Address
@@ -77,7 +79,7 @@ func (p *parser) setStart(format byte, data []byte) error {
 // returns io.EOF on End Of File record and ErrSyntax or ErrChecksum
 // on invalid input.
 func (p *parser) parseLine(s string) error {
-	if s[0] != ':' {
+	if s == "" || s[0] != ':' {
 		return ErrSyntax
 	}
 	s = s[1:]
@@ -110,11 +112,10 @@ func (p *parser) parseLine(s string) error {
 			// (16- and 32-bit, respectively), and in 16-bit
 			// format, at the end of the current segment to the
 			// beginning thereof.
-			if p.data.Format == FormatAuto {
-				return ErrSyntax
-			}
 			var c Chunk
 			switch {
+			case p.data.Format == FormatAuto:
+				return ErrSyntax
 			case p.data.Format != Format32bit:
 				c.Addr = p.fullAddr(0)
 				fallthrough
@@ -252,7 +253,7 @@ func (r *Reader) Read(buf []byte) (int, error) {
 }
 
 // ReadStart returns the start address, or zero if it has not been
-// set.  ReadStart may return an error (*IHex).ReadFrom.
+// set.  ReadStart may return an error from (*IHex).ReadFrom.
 func (r *Reader) ReadStart() (uint32, error) {
 	if err := r.load(); err != nil {
 		return 0, err
