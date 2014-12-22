@@ -132,13 +132,12 @@ func (cl *ChunkList) add(c Chunk) {
 	if len(c.Data) == 0 {
 		return
 	}
-	i := cl.find(int64(c.Addr))
-	if i < len(*cl) && (*cl)[i].overlaps(c) {
+	if i := cl.find(int64(c.Addr)); i < len(*cl) && (*cl)[i].overlaps(c) {
 		(*cl)[i] = (*cl)[i].overwrite(c)
 		cl.join(i)
 	} else {
-		(*cl) = append((*cl), c)
-		if i < len(*cl) {
+		*cl = append((*cl), c)
+		if i < len(*cl)-1 {
 			copy((*cl)[i+1:], (*cl)[i:])
 			(*cl)[i] = c
 		}
@@ -149,17 +148,16 @@ func (cl *ChunkList) add(c Chunk) {
 // non-zero-legth chunks.
 func (cl ChunkList) normal() bool {
 	for i := 0; i < len(cl)-1; i++ {
-		if cl[i].end() >= int64(cl[i+1].Addr) ||
-			len(cl[i+1].Data) == 0 {
+		if len(cl[i].Data) == 0 || cl[i].end() >= int64(cl[i+1].Addr) {
 			return false
 		}
 	}
-	return len(cl) == 0 || len(cl[0].Data) != 0
+	return len(cl) == 0 || len(cl[len(cl)-1].Data) != 0
 }
 
-// Normalize returns a sorted list of nonadjacent non-zero-legth
+// Normalize turns cl into a sorted list of nonadjacent non-zero-legth
 // chunks representing the address space as it would look after the
-// data in ChunkList would be written to it sequentially.
+// data in cl would be written to it sequentially.
 // Normalize may mutate data in place.
 func (cl *ChunkList) Normalize() {
 	if cl.normal() {

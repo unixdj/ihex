@@ -10,12 +10,11 @@ package ihex
 
 import (
 	"encoding/binary"
-	"encoding/hex"
 	"io"
 	"strings"
 )
 
-// Parser is an IHEX parser.  Format is set in data, which also holds
+// parser is an IHEX parser.  Format is set in data, which also holds
 // the result of parsing.  segment is zero for 8-bit format, Segment
 // Base Address for 16-bit and Upper Linear Base Address for 32-bit.
 type parser struct {
@@ -75,23 +74,38 @@ func (p *parser) setStart(format byte, data []byte) error {
 	return nil
 }
 
+func hexDecodeString(s string) ([]byte, error) {
+	if len(s)&1 != 0 {
+		return nil, ErrSyntax
+	}
+	buf := make([]byte, len(s)>>1)
+	for i := range buf {
+		n := strings.IndexByte(hexDigits, s[0])<<4 |
+			strings.IndexByte(hexDigits, s[1])
+		if n&^0xff != 0 {
+			return nil, ErrSyntax
+		}
+		buf[i] = byte(n)
+		s = s[2:]
+	}
+	return buf, nil
+}
+
 // parseLine parses an IHEX record and applies it to p.data.  It
 // returns io.EOF on End Of File record and ErrSyntax or ErrChecksum
 // on invalid input.
 func (p *parser) parseLine(s string) error {
-	if s == "" || s[0] != ':' {
+	if len(s) < 1+(dataOff+1)<<1 || s[0] != ':' {
 		return ErrSyntax
 	}
-	s = s[1:]
-	end := strings.LastIndexAny(s, hexDigits) + 1
-	if end < 10 || end&1 != 0 || (end != len(s) && s[end] != '\r') {
-		return ErrSyntax
+	buf, err := hexDecodeString(s[1:])
+	if err != nil {
+		return err
 	}
 	var (
-		buf, _ = hex.DecodeString(s[:end])
-		addr   = binary.BigEndian.Uint16(buf[addrOff:])
-		data   = buf[dataOff : len(buf)-1]
-		sum    byte
+		addr = binary.BigEndian.Uint16(buf[addrOff:])
+		data = buf[dataOff : len(buf)-1]
+		sum  byte
 	)
 	for _, v := range buf {
 		sum += v
@@ -160,6 +174,7 @@ type Reader struct {
 	r       io.Reader // reader
 	format  byte      // format requested by caller
 	data    *IHex     // data
+	err     error     // read error
 	pos     int64     // reader position
 	end     int64     // end address
 	padTo   int64     // pad-to address
@@ -188,13 +203,17 @@ func NewPadReader(r io.Reader, format byte, padTo int64, gapFill byte) (*Reader,
 // load reads an IHEX file from an underlying reader if it has not yet
 // been read.
 func (r *Reader) load() error {
+	if r.err != nil {
+		return r.err
+	}
 	if r.data == nil {
-		r.data = &IHex{Format: r.format}
-		if err := r.data.ReadFrom(r.r); err != nil {
-			return err
+		ix := IHex{Format: r.format}
+		if r.err = ix.ReadFrom(r.r); r.err != nil {
+			return r.err
 		}
-		if len(r.data.Chunks) != 0 {
-			r.end = r.data.Chunks[len(r.data.Chunks)-1].end()
+		r.data = &ix
+		if len(ix.Chunks) != 0 {
+			r.end = ix.Chunks[len(ix.Chunks)-1].end()
 		}
 		if r.end < r.padTo {
 			r.end = r.padTo

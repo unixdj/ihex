@@ -68,22 +68,22 @@ func NewWriter(w io.Writer, format byte) (*Writer, error) {
 }
 
 // writeRec writes a record of type typ.
-func (w *Writer) writeRec(addr uint16, typ byte, buf []byte) error {
+func (w *Writer) writeRec(typ byte, addr uint16, data []byte) error {
 	var (
 		sum byte
 		n   int
 	)
-	w.head = [...]byte{byte(len(buf)), byte(addr >> 8), byte(addr), typ}
+	w.head = [...]byte{byte(len(data)), byte(addr >> 8), byte(addr), typ}
 	for _, v := range w.head {
 		sum += v
 	}
-	for _, v := range buf {
+	for _, v := range data {
 		sum += v
 	}
 	w.line[n] = ':'
 	n++
 	n += hexEncode(w.line[n:], w.head[:])
-	n += hexEncode(w.line[n:], buf)
+	n += hexEncode(w.line[n:], data)
 	n += hexEncodeByte(w.line[n:], -sum)
 	w.line[n] = '\n'
 	n++
@@ -100,10 +100,10 @@ func (w *Writer) writeData(buf []byte) error {
 			return ErrRange
 		}
 		if w.format == Format16bit {
-			err = w.writeRec(0, extSegmentAddrRec,
+			err = w.writeRec(extSegmentAddrRec, 0,
 				[]byte{byte(segment << 4), 0})
 		} else {
-			err = w.writeRec(0, extLinearAddrRec,
+			err = w.writeRec(extLinearAddrRec, 0,
 				[]byte{byte(segment >> 8), byte(segment)})
 		}
 		if err != nil {
@@ -111,7 +111,7 @@ func (w *Writer) writeData(buf []byte) error {
 		}
 		w.segment = segment
 	}
-	if err = w.writeRec(uint16(w.addr), dataRec, buf); err != nil {
+	if err = w.writeRec(dataRec, uint16(w.addr), buf); err != nil {
 		return err
 	}
 	w.addr += int64(len(buf))
@@ -192,16 +192,16 @@ func (w *Writer) WriteStart(addr uint32) error {
 	}
 	var typ byte
 	switch w.format {
-	case Format32bit:
-		typ = startLinearAddrRec
 	case Format16bit:
 		typ = startSegmentAddrRec
+	case Format32bit:
+		typ = startLinearAddrRec
 	default:
-		return ErrSyntax
+		return ErrFormat
 	}
 	w.buf = append(w.buf,
 		byte(addr>>24), byte(addr>>16), byte(addr>>8), byte(addr))
-	err := w.writeRec(0, typ, w.buf)
+	err := w.writeRec(typ, 0, w.buf)
 	w.buf = w.buf[:0]
 	return err
 }
@@ -237,7 +237,8 @@ func (w *Writer) Seek(offset int64, whence int) (int64, error) {
 // Close flushes data buffers of w and writes an EOF record to an
 // underlying writer.  It may return non-nil if any of the writes
 // fail.  After Close is called, further calls to Close will return
-// nil, and calls to other methods of w will return an error.
+// nil, and calls to other methods of w will return ErrClosed as an
+// error.
 func (w *Writer) Close() error {
 	if w.closed {
 		return nil
@@ -246,5 +247,5 @@ func (w *Writer) Close() error {
 	if err := w.flush(); err != nil {
 		return err
 	}
-	return w.writeRec(0, eofRec, nil)
+	return w.writeRec(eofRec, 0, nil)
 }
