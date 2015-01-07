@@ -25,7 +25,7 @@ type parser struct {
 // fullAddr returns the full address composed from p.segment and
 // addr.
 func (p *parser) fullAddr(addr uint16) uint32 {
-	if p.data.Format == Format16bit {
+	if p.data.Flags&FormatMask == Format16bit {
 		return (uint32(p.segment)<<4 + uint32(addr)) & (1<<20 - 1)
 	}
 	return uint32(p.segment)<<16 | uint32(addr)
@@ -34,9 +34,9 @@ func (p *parser) fullAddr(addr uint16) uint32 {
 // setFormat sets the format of p to format if applicable, and returns
 // ErrSyntax otherwise.
 func (p *parser) setFormat(format byte) error {
-	switch p.data.Format {
+	switch p.data.Flags & FormatMask {
 	case FormatAuto:
-		p.data.Format = format
+		p.data.Flags |= format
 	case format:
 	default:
 		return ErrSyntax
@@ -128,9 +128,9 @@ func (p *parser) parseLine(s string) error {
 			// beginning thereof.
 			var c Chunk
 			switch {
-			case p.data.Format == FormatAuto:
+			case p.data.Flags&FormatMask == FormatAuto:
 				return ErrSyntax
-			case p.data.Format != Format32bit:
+			case p.data.Flags&FormatMask != Format32bit:
 				c.Addr = p.fullAddr(0)
 				fallthrough
 			case p.segment == 0xffff:
@@ -181,7 +181,8 @@ type Reader struct {
 	gapFill byte      // filler byte
 }
 
-// NewReader returns a Reader reading from r.
+// NewReader returns a Reader reading from r.  format must be one of
+// FormatAuto, Format8bit, Format16bit or Format32bit.
 func NewReader(r io.Reader, format byte) (*Reader, error) {
 	return NewPadReader(r, format, 0, 0)
 }
@@ -190,7 +191,7 @@ func NewReader(r io.Reader, format byte) (*Reader, error) {
 // has its address space padded to at least padTo, with any gaps
 // filled with gapFill.
 func NewPadReader(r io.Reader, format byte, padTo int64, gapFill byte) (*Reader, error) {
-	if format > Format32bit {
+	if format&^FormatMask != 0 {
 		return nil, ErrFormat
 	}
 	if padTo < 0 || padTo > 1<<32 {
@@ -207,7 +208,7 @@ func (r *Reader) load() error {
 		return r.err
 	}
 	if r.data == nil {
-		ix := IHex{Format: r.format}
+		ix := IHex{Flags: r.format}
 		if r.err = ix.ReadFrom(r.r); r.err != nil {
 			return r.err
 		}

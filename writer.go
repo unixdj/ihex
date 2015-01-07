@@ -14,9 +14,10 @@ import (
 )
 
 const (
-	dataRecLen = 0x20              // data bytes per Data record
-	maxLineLen = dataRecLen*2 + 12 // maximim length of a record as text
-	hexDigits  = "0123456789ABCDEF"
+	longDataLen  = 0x20               // data bytes per Data record
+	shortDataLen = 0x10               // data bytes per short Data record
+	maxLineLen   = longDataLen*2 + 12 // maximim length of a record as text
+	hexDigits    = "0123456789ABCDEF"
 )
 
 var (
@@ -51,6 +52,7 @@ type Writer struct {
 	addr    int64            // write address
 	segment int64            // upper 16 bits of addr in last data written
 	size    int64            // topmost address written + 1
+	dataLen int              // data bytes per record
 	format  byte             // format
 	closed  bool             // closed?
 	buf     []byte           // data buffer
@@ -58,13 +60,18 @@ type Writer struct {
 	line    [maxLineLen]byte // line buffer
 }
 
-// NewWriter retutrns a new Writer writing to w.  If format is
-// invalid or equal to FormatAuto, ErrFormat is returned as error.
-func NewWriter(w io.Writer, format byte) (*Writer, error) {
-	if format < Format8bit || format > Format32bit {
+// NewWriter retutrns a new Writer writing to w.  flags defines the
+// IHEX file format (which may not be FormatAuto) and flags.  If flags
+// is invalid, ErrFormat is returned as error.
+func NewWriter(w io.Writer, flags byte) (*Writer, error) {
+	if flags&FormatMask == FormatAuto || flags > FormatMask|FlagsMask {
 		return nil, ErrFormat
 	}
-	return &Writer{w: w, format: format}, nil
+	dl := longDataLen
+	if flags&ShortData != 0 {
+		dl = shortDataLen
+	}
+	return &Writer{w: w, format: flags & FormatMask, dataLen: dl}, nil
 }
 
 // writeRec writes a record of type typ.
@@ -135,18 +142,19 @@ func (w *Writer) flush() error {
 // Write writes data from buf as Data records.  Extended Segment or
 // Linear Address records are generated as needed.  Writes beyond the
 // address space valid for the current format generate an error.  Data
-// are written in chunks of up to 32 bytes, never spanning a 32-byte
-// address boundary.  Writes are buffered as needed.
+// are written in chunks of up to 32 bytes (16 bytes if ShortData flag
+// was set when calling NewWriter), never spanning a 32-byte address
+// boundary.  Writes are buffered as needed.
 func (w *Writer) Write(buf []byte) (int, error) {
 	if w.closed {
 		return 0, ErrClosed
 	}
 	var (
 		n    int
-		size = dataRecLen
+		size = w.dataLen
 	)
-	if w.addr&(dataRecLen-1) != 0 {
-		size = int(-w.addr) & (dataRecLen - 1)
+	if w.addr&int64(w.dataLen-1) != 0 {
+		size = int(-w.addr) & (w.dataLen - 1)
 	}
 	if len(w.buf) != 0 {
 		n = size - len(w.buf)
@@ -161,7 +169,7 @@ func (w *Writer) Write(buf []byte) (int, error) {
 		if err := w.flush(); err != nil {
 			return 0, err
 		}
-		size = dataRecLen
+		size = w.dataLen
 	}
 	for len(buf) >= size {
 		if err := w.writeData(buf[:size]); err != nil {
@@ -169,7 +177,7 @@ func (w *Writer) Write(buf []byte) (int, error) {
 		}
 		n += size
 		buf = buf[size:]
-		size = dataRecLen
+		size = w.dataLen
 	}
 	if len(buf) != 0 {
 		w.buf = append(w.buf, buf...)
