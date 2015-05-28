@@ -67,11 +67,11 @@ func NewWriter(w io.Writer, flags byte) (*Writer, error) {
 	if flags&FormatMask == FormatAuto || flags > FormatMask|FlagsMask {
 		return nil, ErrFormat
 	}
-	dl := longDataLen
+	xw := Writer{w: w, format: flags & FormatMask, dataLen: longDataLen}
 	if flags&ShortData != 0 {
-		dl = shortDataLen
+		xw.dataLen = shortDataLen
 	}
-	return &Writer{w: w, format: flags & FormatMask, dataLen: dl}, nil
+	return &xw, nil
 }
 
 // writeRec writes a record of type typ.

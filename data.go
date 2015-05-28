@@ -125,7 +125,7 @@ func (cl ChunkList) find(addr int64) int {
 func (cl *ChunkList) join(i int) {
 	for i < len(*cl)-1 && (*cl)[i].overlaps((*cl)[i+1]) {
 		(*cl)[i] = (*cl)[i+1].overwrite((*cl)[i])
-		(*cl) = append((*cl)[:i], (*cl)[i+1:]...)
+		*cl = append((*cl)[:i+1], (*cl)[i+2:]...)
 	}
 }
 
@@ -139,7 +139,7 @@ func (cl *ChunkList) add(c Chunk) {
 		(*cl)[i] = (*cl)[i].overwrite(c)
 		cl.join(i)
 	} else {
-		*cl = append((*cl), c)
+		*cl = append(*cl, c)
 		if i < len(*cl)-1 {
 			copy((*cl)[i+1:], (*cl)[i:])
 			(*cl)[i] = c

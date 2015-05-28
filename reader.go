@@ -246,8 +246,8 @@ func (r *Reader) Read(buf []byte) (int, error) {
 			if size >= int64(len(buf)) {
 				break
 			}
-			for j := range buf[:size] {
-				buf[j] = r.gapFill
+			for i := range buf[:size] {
+				buf[i] = r.gapFill
 			}
 			buf = buf[size:]
 			r.pos += size
