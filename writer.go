@@ -187,7 +187,7 @@ func (w *Writer) Write(buf []byte) (int, error) {
 }
 
 // WriteStart sets the start address to addr.  If the format of w is
-// Format32bit, an Start Linear Address record is generated, setting
+// Format32bit, a Start Linear Address record is generated, setting
 // EIP to addr.  For Format16bit, the Start Segment Address written
 // sets CS to the high 16 bits of addr and IP to its low 16 bits.
 // Attempting to set a start address for an 8-bit format is an error.
