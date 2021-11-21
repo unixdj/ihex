@@ -77,56 +77,41 @@ func (c Chunk) end() int64 {
 	return int64(c.Addr) + int64(len(c.Data))
 }
 
-// overlaps returns true if two chunks overlap or are adjacent.
+// overlaps returns true if two Chunks overlap or are adjacent.
 // XXX misnomer
 func (c Chunk) overlaps(cc Chunk) bool {
 	return int64(c.Addr) <= cc.end() && int64(cc.Addr) <= c.end()
 }
 
-// overwrite returns a chunk with data from under and over, the latter
-// taking the precedence over the former.
-func (under Chunk) overwrite(over Chunk) Chunk {
-	if over.Addr == under.Addr {
-		if over.end() >= under.end() {
-			return over
-		}
-		copy(under.Data, over.Data)
-		return under
-	}
-	if over.Addr > under.Addr {
-		if over.end() <= under.end() {
-			copy(under.Data[over.Addr-under.Addr:], over.Data)
-		} else {
-			under.Data = append(under.Data[:over.Addr-under.Addr],
-				over.Data...)
-		}
-		return under
-	}
-	if under.end() > over.end() {
+// over returns a Chunk with data from two adjacent or overlapping Chunks,
+// over and under, the former taking the precedence over the latter.
+// over may overwrite data in the Chunks.
+func (over Chunk) over(under Chunk) Chunk {
+	switch {
+	case over.Addr <= under.Addr && over.end() >= under.end():
+		return over
+	case over.Addr < under.Addr:
 		over.Data = append(over.Data,
-			under.Data[:over.end()-int64(under.Addr)]...)
+			under.Data[over.end()-int64(under.Addr):]...)
+		return over
+	case over.end() > under.end():
+		under.Data = append(under.Data[:over.Addr-under.Addr],
+			over.Data...)
+		return under
+	default:
+		copy(under.Data[over.Addr-under.Addr:], over.Data)
+		return under
 	}
-	return over
 }
 
-// ChunkList is a slice of chunks.
+// ChunkList is a slice of Chunks.
 type ChunkList []Chunk
 
-// find finds the first chunk whose end is at or after addr in a
+// find finds the first Chunk whose end is at or after addr in a
 // sorted slice cl.
 func (cl ChunkList) find(addr int64) int {
 	return sort.Search(len(cl),
 		func(i int) bool { return cl[i].end() >= addr })
-}
-
-// join joins adjacent and overlapping chunks in a sorted slice cl,
-// starting at the index i.  In case of overlapping chunks, data in
-// the one with the lower index take precedence.
-func (cl *ChunkList) join(i int) {
-	for i < len(*cl)-1 && (*cl)[i].overlaps((*cl)[i+1]) {
-		(*cl)[i] = (*cl)[i+1].overwrite((*cl)[i])
-		*cl = append((*cl)[:i+1], (*cl)[i+2:]...)
-	}
 }
 
 // add adds data in c to the address space represented by a
@@ -135,20 +120,22 @@ func (cl *ChunkList) add(c Chunk) {
 	if len(c.Data) == 0 {
 		return
 	}
-	if i := cl.find(int64(c.Addr)); i < len(*cl) && (*cl)[i].overlaps(c) {
-		(*cl)[i] = (*cl)[i].overwrite(c)
-		cl.join(i)
-	} else {
+	if i := cl.find(int64(c.Addr)); i == len(*cl) {
 		*cl = append(*cl, c)
-		if i < len(*cl)-1 {
-			copy((*cl)[i+1:], (*cl)[i:])
-			(*cl)[i] = c
+	} else if (*cl)[i].overlaps(c) {
+		(*cl)[i] = c.over((*cl)[i])
+		for i < len(*cl)-1 && (*cl)[i].overlaps((*cl)[i+1]) {
+			(*cl)[i] = (*cl)[i].over((*cl)[i+1])
+			*cl = append((*cl)[:i+1], (*cl)[i+2:]...)
 		}
+	} else {
+		*cl = append((*cl)[:i+1], (*cl)[i:]...)
+		(*cl)[i] = c
 	}
 }
 
 // normal returns true if cl is a sorted list of nonadjacent
-// non-zero-legth chunks.
+// non-zero-legth Chunks.
 func (cl ChunkList) normal() bool {
 	for i := 0; i < len(cl)-1; i++ {
 		if len(cl[i].Data) == 0 || cl[i].end() >= int64(cl[i+1].Addr) {
@@ -159,7 +146,7 @@ func (cl ChunkList) normal() bool {
 }
 
 // Normalize turns cl into a sorted list of nonadjacent non-zero-legth
-// chunks representing the address space as it would look after the
+// Chunks representing the address space as it would look after the
 // data in cl would be written to it sequentially.
 // Normalize may mutate data in place.
 func (cl *ChunkList) Normalize() {
