@@ -296,10 +296,10 @@ func (r *Reader) ReadStart() (uint32, error) {
 // return ErrRange.  Seek is compatible with io.Seeker.
 func (r *Reader) Seek(offset int64, whence int) (int64, error) {
 	switch whence {
-	case 0:
-	case 1:
+	case io.SeekStart:
+	case io.SeekCurrent:
 		offset += r.pos
-	case 2:
+	case io.SeekEnd:
 		offset += r.end
 	default:
 		return r.pos, ErrRange

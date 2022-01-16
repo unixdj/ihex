@@ -235,10 +235,10 @@ func (w *Writer) Seek(offset int64, whence int) (int64, error) {
 		return 0, err
 	}
 	switch whence {
-	case 0:
-	case 1:
+	case io.SeekStart:
+	case io.SeekCurrent:
 		offset += w.addr
-	case 2:
+	case io.SeekEnd:
 		offset += w.size
 	default:
 		return w.addr, ErrRange
