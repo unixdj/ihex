@@ -1,6 +1,7 @@
 ihex is a Go package implementing access to Intel HEX files.
 
-Copyright 2014 Vadim Vygonets.  Licensed under WTFPL 2.0.
+Copyright (c) 2014-2015, 2020-2022 Vadim Vygonets <vadik@vygo.net>
+Licensed under ISC License.
 
 Installing:
 go get github.com/unixdj/ihex 
