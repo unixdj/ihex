@@ -33,7 +33,7 @@ type parser struct {
 // fullAddr returns the full address composed from p.segment and
 // addr.
 func (p *parser) fullAddr(addr uint16) uint32 {
-	if p.data.Flags&FormatMask == Format16bit {
+	if p.data.Format == Format16Bit {
 		return (uint32(p.segment)<<4 + uint32(addr)) & (1<<20 - 1)
 	}
 	return uint32(p.segment)<<16 | uint32(addr)
@@ -42,9 +42,9 @@ func (p *parser) fullAddr(addr uint16) uint32 {
 // setFormat sets the format of p to format if applicable, and returns
 // ErrSyntax otherwise.
 func (p *parser) setFormat(format byte) error {
-	switch p.data.Flags & FormatMask {
+	switch p.data.Format {
 	case FormatAuto:
-		p.data.Flags |= format
+		p.data.Format = format
 	case format:
 	default:
 		return ErrSyntax
@@ -52,10 +52,10 @@ func (p *parser) setFormat(format byte) error {
 	return nil
 }
 
-// setSegment sets the segment base or upper linear address from data.
-// If data is of invalid length or the parser's file format is
-// incompatible with format, ErrSyntax is returned.  If the parser's
-// format is FormatAuto, it will be set to format.
+// setSegment sets the Segment Address or Upper Linear Base Address
+// from data.  If data is of invalid length or the parser's file
+// format is incompatible with format, ErrSyntax is returned.
+// If the parser's format is FormatAuto, it will be set to format.
 func (p *parser) setSegment(format byte, data []byte) error {
 	if len(data) != 2 {
 		return ErrSyntax
@@ -67,7 +67,7 @@ func (p *parser) setSegment(format byte, data []byte) error {
 	return nil
 }
 
-// setStart sets the start segment/linear address from data.  If data
+// setStart sets the Start Segment/Linear Address from data.  If data
 // is of invalid length or the parser's file format is incompatible
 // with format, ErrSyntax is returned.  If the parser's format is
 // FormatAuto, it will be set to format.
@@ -103,7 +103,7 @@ func hexDecodeString(s string) ([]byte, error) {
 // returns io.EOF on End Of File record and ErrSyntax or ErrChecksum
 // on invalid input.
 func (p *parser) parseLine(s string) error {
-	if len(s) < 1+(dataOff+1)<<1 || s[0] != ':' {
+	if len(s) < 1+(dataOff+1)*2 || s[0] != ':' {
 		return ErrSyntax
 	}
 	buf, err := hexDecodeString(s[1:])
@@ -136,9 +136,9 @@ func (p *parser) parseLine(s string) error {
 			// beginning thereof.
 			var c Chunk
 			switch {
-			case p.data.Flags&FormatMask == FormatAuto:
+			case p.data.Format == FormatAuto:
 				return ErrSyntax
-			case p.data.Flags&FormatMask != Format32bit:
+			case p.data.Format != Format32Bit:
 				c.Addr = p.fullAddr(0)
 				fallthrough
 			case p.segment == 0xffff:
@@ -154,13 +154,13 @@ func (p *parser) parseLine(s string) error {
 		}
 		return io.EOF
 	case extSegmentAddrRec:
-		return p.setSegment(Format16bit, data)
+		return p.setSegment(Format16Bit, data)
 	case startSegmentAddrRec:
-		return p.setStart(Format16bit, data)
+		return p.setStart(Format16Bit, data)
 	case extLinearAddrRec:
-		return p.setSegment(Format32bit, data)
+		return p.setSegment(Format32Bit, data)
 	case startLinearAddrRec:
-		return p.setStart(Format32bit, data)
+		return p.setStart(Format32Bit, data)
 	default:
 		return ErrSyntax
 	}
@@ -190,7 +190,7 @@ type Reader struct {
 }
 
 // NewReader returns a Reader reading from r.  format must be one of
-// FormatAuto, Format8bit, Format16bit or Format32bit.
+// FormatAuto, Format8Bit, Format16Bit or Format32Bit.
 func NewReader(r io.Reader, format byte) (*Reader, error) {
 	return NewPadReader(r, format, 0, 0)
 }
@@ -199,8 +199,8 @@ func NewReader(r io.Reader, format byte) (*Reader, error) {
 // has its address space padded to at least padTo, with any gaps
 // filled with gapFill.
 func NewPadReader(r io.Reader, format byte, padTo int64, gapFill byte) (*Reader, error) {
-	if format&^FormatMask != 0 {
-		return nil, ErrFormat
+	if format > Format32Bit {
+		return nil, ErrArgs
 	}
 	if padTo < 0 || padTo > 1<<32 {
 		return nil, ErrRange
@@ -216,7 +216,7 @@ func (r *Reader) load() error {
 		return r.err
 	}
 	if r.data == nil {
-		ix := IHex{Flags: r.format}
+		ix := IHex{Format: r.format}
 		if r.err = ix.ReadFrom(r.r); r.err != nil {
 			return r.err
 		}
