@@ -56,12 +56,12 @@ const (
 
 // record types
 const (
-	dataRec             = iota // Data
-	eofRec                     // End of File
-	extSegmentAddrRec          // Extended Segment Address
-	startSegmentAddrRec        // Start Segment Address
-	extLinearAddrRec           // Extended Linear Address
-	startLinearAddrRec         // Start Linear Address
+	dataRec             = byte(iota) // Data
+	eofRec                           // End of File
+	extSegmentAddrRec                // Extended Segment Address
+	startSegmentAddrRec              // Start Segment Address
+	extLinearAddrRec                 // Extended Linear Address
+	startLinearAddrRec               // Start Linear Address
 )
 
 // field offsets within record

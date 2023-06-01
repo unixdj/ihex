@@ -127,6 +127,7 @@ func (p *parser) parseLine(s string) error {
 	}
 	switch buf[typeOff] {
 	case dataRec:
+		a := p.fullAddr(addr)
 		if addr+uint16(len(data))-1 < addr {
 			// For Data records whose data's addresses overflow
 			// 16-bit register, in 8-bit and 32-bit format the data
@@ -134,20 +135,21 @@ func (p *parser) parseLine(s string) error {
 			// (16- and 32-bit, respectively), and in 16-bit
 			// format, at the end of the current segment to the
 			// beginning thereof.
-			var c Chunk
+			var aa uint32
 			switch {
 			case p.data.Format == FormatAuto:
 				return ErrFormat
 			case p.data.Format != Format32Bit:
-				c.Addr = p.fullAddr(0)
+				aa = p.fullAddr(0)
 				fallthrough
 			case p.segment == 0xffff:
-				c.Data = append(c.Data, data[-addr:]...)
-				p.data.Chunks.add(c)
-				data = data[:-addr]
+				d := make([]byte, -addr)
+				copy(d, data)
+				p.data.Chunks.add(Chunk{a, d})
+				a, data = aa, data[-addr:]
 			}
 		}
-		p.data.Chunks.add(Chunk{p.fullAddr(addr), data})
+		p.data.Chunks.add(Chunk{a, data})
 	case eofRec:
 		if len(data) != 0 {
 			return ErrSyntax

@@ -56,10 +56,12 @@ type Writer struct {
 	segment    int64            // upper 16 bits of addr in last Data record written
 	end        int64            // topmost address written + 1
 	dataRecLen int              // bytes per Data record
+	bufLen     int              // bytes in data buffer
 	format     byte             // format
 	closed     bool             // closed?
-	buf        []byte           // data buffer
+	extBuf     [2]byte          // extended address buffer
 	head       [dataOff]byte    // header buffer
+	buf        [maxDataLen]byte // data buffer
 	line       [maxLineLen]byte // line buffer
 }
 
@@ -112,14 +114,13 @@ func (w *Writer) writeData(buf []byte) error {
 		if w.addr >= sizeLimit(w.format) {
 			return ErrRange
 		}
+		typ, high := extLinearAddrRec, segment
 		if w.format == Format16Bit {
-			err = w.writeRec(extSegmentAddrRec, 0,
-				[]byte{byte(segment << 4), 0})
-		} else {
-			err = w.writeRec(extLinearAddrRec, 0,
-				[]byte{byte(segment >> 8), byte(segment)})
+			typ = extSegmentAddrRec
+			high <<= 12
 		}
-		if err != nil {
+		w.extBuf[0], w.extBuf[1] = byte(high>>8), byte(high)
+		if err = w.writeRec(typ, 0, w.extBuf[:]); err != nil {
 			return err
 		}
 		w.segment = segment
@@ -136,11 +137,11 @@ func (w *Writer) writeData(buf []byte) error {
 
 // flush flushes the write buffer.
 func (w *Writer) flush() error {
-	if len(w.buf) != 0 {
-		if err := w.writeData(w.buf); err != nil {
+	if w.bufLen != 0 {
+		if err := w.writeData(w.buf[:w.bufLen]); err != nil {
 			return err
 		}
-		w.buf = w.buf[:0]
+		w.bufLen = 0
 	}
 	return nil
 }
@@ -157,21 +158,13 @@ func (w *Writer) Write(buf []byte) (int, error) {
 	}
 	var (
 		n    int
-		size = w.dataRecLen
+		mask = w.dataRecLen - 1
+		size = w.dataRecLen - ((int(w.addr) + w.bufLen) & mask)
 	)
-	if w.addr&int64(w.dataRecLen-1) != 0 {
-		size = int(-w.addr) & (w.dataRecLen - 1)
-	}
-	if len(w.buf) != 0 {
-		n = size - len(w.buf)
-		if n > len(buf) {
-			n = len(buf)
-		}
-		w.buf = append(w.buf, buf[:n]...)
+	if w.bufLen != 0 && len(buf) >= size {
+		n = size
+		w.bufLen += copy(w.buf[w.bufLen:], buf[:n])
 		buf = buf[n:]
-		if len(w.buf) < size {
-			return n, nil
-		}
 		if err := w.flush(); err != nil {
 			return 0, err
 		}
@@ -186,7 +179,7 @@ func (w *Writer) Write(buf []byte) (int, error) {
 		size = w.dataRecLen
 	}
 	if len(buf) != 0 {
-		w.buf = append(w.buf, buf...)
+		w.bufLen += copy(w.buf[w.bufLen:], buf)
 		n += len(buf)
 	}
 	return n, nil
@@ -201,8 +194,7 @@ func (w *Writer) Write(buf []byte) (int, error) {
 func (w *Writer) WriteStart(addr uint32) error {
 	if w.closed {
 		return ErrClosed
-	}
-	if err := w.flush(); err != nil {
+	} else if err := w.flush(); err != nil {
 		return err
 	}
 	var typ byte
@@ -214,11 +206,11 @@ func (w *Writer) WriteStart(addr uint32) error {
 	default:
 		return ErrFormat
 	}
-	w.buf = append(w.buf,
-		byte(addr>>24), byte(addr>>16), byte(addr>>8), byte(addr))
-	err := w.writeRec(typ, 0, w.buf)
-	w.buf = w.buf[:0]
-	return err
+	w.buf[0] = byte(addr >> 24)
+	w.buf[1] = byte(addr >> 16)
+	w.buf[2] = byte(addr >> 8)
+	w.buf[3] = byte(addr)
+	return w.writeRec(typ, 0, w.buf[:4])
 }
 
 // Seek causes the next Write to write data to the specified address
@@ -229,8 +221,7 @@ func (w *Writer) WriteStart(addr uint32) error {
 func (w *Writer) Seek(offset int64, whence int) (int64, error) {
 	if w.closed {
 		return 0, ErrClosed
-	}
-	if err := w.flush(); err != nil {
+	} else if err := w.flush(); err != nil {
 		return 0, err
 	}
 	switch whence {
