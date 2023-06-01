@@ -47,7 +47,7 @@ func (p *parser) setFormat(format byte) error {
 		p.data.Format = format
 	case format:
 	default:
-		return ErrSyntax
+		return ErrFormat
 	}
 	return nil
 }
@@ -137,7 +137,7 @@ func (p *parser) parseLine(s string) error {
 			var c Chunk
 			switch {
 			case p.data.Format == FormatAuto:
-				return ErrSyntax
+				return ErrFormat
 			case p.data.Format != Format32Bit:
 				c.Addr = p.fullAddr(0)
 				fallthrough
@@ -162,7 +162,7 @@ func (p *parser) parseLine(s string) error {
 	case startLinearAddrRec:
 		return p.setStart(Format32Bit, data)
 	default:
-		return ErrSyntax
+		return ErrRecord
 	}
 	return nil
 }

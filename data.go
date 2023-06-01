@@ -40,8 +40,10 @@ package ihex
 
 import (
 	"bufio"
+	"errors"
 	"io"
 	"sort"
+	"strconv"
 )
 
 // IHEX file formats
@@ -70,6 +72,41 @@ const (
 	dataOff = 4 // INFO or DATA
 	// last byte: CHKSUM
 )
+
+var (
+	ErrArgs     = errors.New("ihex: invalid arguments")
+	ErrChecksum = errors.New("ihex: checksum error")
+	ErrClosed   = errors.New("ihex: writer is closed")
+	ErrFormat   = errors.New("ihex: invalid record for format")
+	ErrRange    = errors.New("ihex: address out of range")
+	ErrRecord   = errors.New("ihex: unknown record type")
+	ErrSyntax   = errors.New("ihex: invalid syntax")
+)
+
+type SyntaxError struct {
+	Err    error  // ErrChecksum, ErrFormat, ErrRecord or ErrSyntax
+	Line   int    // 0 for missing EOF record, otherwise input line number
+	Format byte   // Active IHEX format
+	Record string // "" for missing EOF record, otherwise input line
+}
+
+var formatName = []string{"unspecified", "I8HEX", "I16HEX", "I32HEX"}
+
+// Error returns the error formatted as one of:
+//     "ihex: <invalid syntax/checksum error> on line <n>"
+//     "ihex: invalid record for <unspecified/I8HEX/I16HEX/I32HEX> format on line <n>"
+//     "ihex: missing EOF record"
+func (e SyntaxError) Error() string {
+	switch {
+	case e.Line == 0:
+		return "ihex: missing EOF record"
+	case e.Err == ErrFormat:
+		return "ihex: invalid record for " + formatName[e.Format] +
+			" format on line " + strconv.Itoa(e.Line)
+	default:
+		return e.Err.Error() + " on line " + strconv.Itoa(e.Line)
+	}
+}
 
 // Chunk represents a contiguous area in the IHEX address space.
 type Chunk struct {
@@ -218,22 +255,29 @@ is set to the value in the last such record.
 */
 func (ix *IHex) ReadFrom(r io.Reader) error {
 	var (
-		p = &parser{data: ix}
-		s = bufio.NewScanner(r)
+		p    = &parser{data: ix}
+		s    = bufio.NewScanner(r)
+		line int
 	)
 	ix.Chunks.Normalize()
 	for s.Scan() {
+		line++
 		if err := p.parseLine(s.Text()); err != nil {
 			if err == io.EOF {
 				return nil
 			}
-			return err
+			return SyntaxError{
+				Err:    err,
+				Line:   line,
+				Format: ix.Format,
+				Record: s.Text(),
+			}
 		}
 	}
 	if err := s.Err(); err != nil {
 		return err
 	}
-	return ErrSyntax
+	return SyntaxError{Err: ErrSyntax}
 }
 
 // WriteTo writes data from ix to an IHEX file.  Using a Writer of the

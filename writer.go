@@ -17,7 +17,6 @@
 package ihex
 
 import (
-	"errors"
 	"io"
 )
 
@@ -30,15 +29,6 @@ const (
 	maxLineLen = 1 + (dataOff+maxDataLen+1)*2 + 1
 
 	hexDigits = "0123456789ABCDEF"
-)
-
-var (
-	ErrChecksum = errors.New("ihex: checksum error")
-	ErrClosed   = errors.New("ihex: writer is closed")
-	ErrFormat   = errors.New("ihex: invalid format")
-	ErrArgs     = errors.New("ihex: invalid arguments")
-	ErrRange    = errors.New("ihex: address out of range")
-	ErrSyntax   = errors.New("ihex: invalid syntax")
 )
 
 func hexEncodeByte(dst []byte, b byte) int {
@@ -81,7 +71,7 @@ type Writer struct {
 func NewWriter(w io.Writer, format byte, dataRecLen byte) (*Writer, error) {
 	if format == FormatAuto || format > Format32Bit ||
 		dataRecLen&(dataRecLen-1) != 0 {
-		return nil, ErrFormat
+		return nil, ErrArgs
 	}
 	if dataRecLen == 0 {
 		dataRecLen = defaultDataLen
