@@ -219,9 +219,10 @@ type IHex struct {
 	DataRecLen byte
 
 	// Start is the "start address".  For 32-bit format it
-	// symbolizes the contents of EIP on 80386, and for
+	// represents the contents of EIP on 80386, and for
 	// 16-bit, the pair of 16-bit registers CS:IP on 8086.
-	// 8-bit format does not support setting a start address.
+	// 8-bit format does not support setting the start
+	// address.
 	Start uint32
 
 	// Chunks are the data written to the address space.
@@ -280,11 +281,11 @@ func (ix *IHex) ReadFrom(r io.Reader) error {
 	return SyntaxError{Err: ErrSyntax}
 }
 
-// WriteTo writes data from ix to an IHEX file.  Using a Writer of the
+// WriteTo writes data from ix to an IHEX file, using a Writer of the
 // format specified by ix.Format (which must not be FormatAuto) and
-// data record length of ix.DataRecLength, it first writes ix.Chunks
-// in order without any normalization, followed by ix.Start unless
-// it's zero.  ix.Start must be zero for 8-bit format files.
+// data record length of ix.DataRecLength.  It writes ix.Chunks in
+// order without any normalization.  If ix.Start is not zero, it
+// writes the start address next.
 func (ix *IHex) WriteTo(w io.Writer) error {
 	xw, err := NewWriter(w, ix.Format, ix.DataRecLen)
 	if err != nil {

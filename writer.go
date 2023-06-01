@@ -240,7 +240,7 @@ func (w *Writer) Seek(offset int64, whence int) (int64, error) {
 	return w.addr, nil
 }
 
-// Close flushes data buffers of w and writes an EOF record to an
+// Close flushes data buffers of w and writes an EOF record to the
 // underlying writer.  It may return non-nil if any of the writes
 // fail.  After Close is called, further calls to Close will return
 // nil, and calls to other methods of w will return ErrClosed as an
