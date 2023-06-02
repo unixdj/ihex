@@ -157,10 +157,10 @@ func (cl ChunkList) find(addr int64) int {
 }
 
 // add adds data in c to the address space represented by a
-// sorted slice cl.
-func (cl *ChunkList) add(c Chunk) {
+// sorted slice cl, returning the merged Chunk.
+func (cl *ChunkList) add(c Chunk) Chunk {
 	if len(c.Data) == 0 {
-		return
+		return c
 	}
 	if i := cl.find(int64(c.Addr)); i == len(*cl) {
 		*cl = append(*cl, c)
@@ -175,6 +175,7 @@ func (cl *ChunkList) add(c Chunk) {
 		}
 		(*cl)[i] = c
 	}
+	return c
 }
 
 // normal returns true if cl is a sorted list of nonadjacent
@@ -256,7 +257,7 @@ is set to the value in the last such record.
 */
 func (ix *IHex) ReadFrom(r io.Reader) error {
 	var (
-		p    = &parser{data: ix}
+		p    = &parser{ix: ix}
 		s    = bufio.NewScanner(r)
 		line int
 	)
