@@ -19,7 +19,6 @@ package ihex
 import (
 	"encoding/binary"
 	"io"
-	"strings"
 )
 
 // parser is an IHEX parser.  Format is set in data, which also holds
@@ -80,21 +79,36 @@ func (p *parser) setStart(format byte, data []byte) error {
 	}
 	p.data.Start = binary.BigEndian.Uint32(data)
 	return nil
+
+var hexmap = [...]byte{
+	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, // 0x30 - 0x37
+	0x08, 0x09, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, // 0x38 - 0x3f
+	0xff, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0xff, // 0x40 - 0x47
 }
 
-func hexDecodeString(s string) ([]byte, error) {
-	if len(s)&1 != 0 {
+// hexDigit returns the value of the hexadecimal digit d, or 0xff on
+// error.
+func hexDigit(d byte) byte {
+	if d -= '0'; d < byte(len(hexmap)) {
+		return hexmap[d]
+	}
+	return 0xff
+}
+
+// hexDecode returns a slice of bytes decoded from hexadecimal digits
+// in s and their sum.  If buf's capacity is sufficient, it's used for
+// storage.
+func hexDecode(s string) ([]byte, error) {
+	buf := make([]byte, len(s)>>1)
+	if len(s) != len(buf)*2 {
 		return nil, ErrSyntax
 	}
-	buf := make([]byte, len(s)>>1)
 	for i := range buf {
-		n := strings.IndexByte(hexDigits, s[0])<<4 |
-			strings.IndexByte(hexDigits, s[1])
-		if n&^0xff != 0 {
+		hi, lo := hexDigit(s[i<<1]), hexDigit(s[i<<1+1])
+		if hi|lo == 0xff {
 			return nil, ErrSyntax
 		}
-		buf[i] = byte(n)
-		s = s[2:]
+		buf[i] = hi<<4 | lo
 	}
 	return buf, nil
 }
@@ -106,7 +120,7 @@ func (p *parser) parseLine(s string) error {
 	if len(s) < 1+(dataOff+1)*2 || s[0] != ':' {
 		return ErrSyntax
 	}
-	buf, err := hexDecodeString(s[1:])
+	buf, err := hexDecode(s[1:])
 	if err != nil {
 		return err
 	}
