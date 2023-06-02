@@ -17,6 +17,7 @@
 package ihex
 
 import (
+	"encoding/binary"
 	"io"
 )
 
@@ -88,7 +89,9 @@ func (w *Writer) writeRec(typ byte, addr uint16, data []byte) error {
 		sum byte
 		n   int
 	)
-	w.head = [...]byte{byte(len(data)), byte(addr >> 8), byte(addr), typ}
+	w.head[0] = byte(len(data))
+	binary.BigEndian.PutUint16(w.head[1:], addr)
+	w.head[3] = typ
 	for _, v := range w.head {
 		sum += v
 	}
@@ -119,7 +122,7 @@ func (w *Writer) writeData(buf []byte) error {
 			typ = extSegmentAddrRec
 			high <<= 12
 		}
-		w.extBuf[0], w.extBuf[1] = byte(high>>8), byte(high)
+		binary.BigEndian.PutUint16(w.extBuf[:], uint16(high))
 		if err = w.writeRec(typ, 0, w.extBuf[:]); err != nil {
 			return err
 		}
@@ -206,10 +209,7 @@ func (w *Writer) WriteStart(addr uint32) error {
 	default:
 		return ErrFormat
 	}
-	w.buf[0] = byte(addr >> 24)
-	w.buf[1] = byte(addr >> 16)
-	w.buf[2] = byte(addr >> 8)
-	w.buf[3] = byte(addr)
+	binary.BigEndian.PutUint32(w.buf[:], addr)
 	return w.writeRec(typ, 0, w.buf[:4])
 }
 
