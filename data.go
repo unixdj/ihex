@@ -48,7 +48,7 @@ import (
 
 // IHEX file formats
 const (
-	FormatAuto  = iota // Auto-detect format
+	FormatAuto  = iota // Reading: auto-detect format; writing: I8HEX
 	Format8Bit         // I8HEX format, 16-bit address space
 	Format16Bit        // I16HEX format, 20-bit address space
 	Format32Bit        // I32HEX format, 32-bit address space
@@ -208,9 +208,9 @@ func (cl *ChunkList) Normalize() {
 
 // IHex represents the contents of an IHEX file.
 type IHex struct {
-	// Format describes the file format.  Legal formats for
-	// writing are Format8Bit, Format16Bit and Format32Bit;
-	// for reading, FormatAuto is also legal.
+	// Format describes the file format.  Legal formats are
+	// FormatAuto, Format8Bit, Format16Bit and Format32Bit;
+	// for writing, FormatAuto is equivalent to Format8Bit.
 	Format byte
 
 	// DataRecLen is the maximum number of bytes in a Data
@@ -256,6 +256,9 @@ If any Start Segment/Linear Address records are encountered, ix.Start
 is set to the value in the last such record.
 */
 func (ix *IHex) ReadFrom(r io.Reader) error {
+	if ix.Format > Format32Bit {
+		return ErrArgs
+	}
 	var (
 		p    = &parser{ix: ix}
 		s    = bufio.NewScanner(r)

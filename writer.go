@@ -33,6 +33,8 @@ const (
 	hexDigits = "0123456789ABCDEF"
 )
 
+var sizeLimits = [...]int64{1 << 16, 1 << 16, 1 << 20, 1 << 32}
+
 func hexEncodeByte(dst []byte, b byte) int {
 	dst[0], dst[1] = hexDigits[b>>4], hexDigits[b&0xf]
 	return 2
@@ -43,10 +45,6 @@ func hexEncode(dst, src []byte) int {
 		hexEncodeByte(dst[i*2:], v)
 	}
 	return len(src) * 2
-}
-
-func sizeLimit(format byte) int64 {
-	return [...]int64{1 << 16, 1 << 20, 1 << 32}[format-Format8Bit]
 }
 
 // Writer writes an IHEX file to an underlying writer.  Records are
@@ -67,14 +65,13 @@ type Writer struct {
 	line       [maxLineLen]byte // line buffer
 }
 
-// NewWriter retutrns a new Writer writing to w.  format defines the
-// IHEX file format (which may not be FormatAuto).  dataRecLen is the
-// maximum number of bytes in a Data record generated, which must be a
-// power of two or 0.  In the latter case the default length of 16 is
-// used.  If any argument is invalid, ErrArgs is returned as error.
+// NewWriter returns a new Writer writing to w.  format defines the
+// IHEX file format.  dataRecLen is the maximum number of bytes in a
+// Data record generated, which must be a power of two or 0.  In the
+// latter case the default length of 16 is used.  If any argument is
+// invalid, ErrArgs is returned as error.
 func NewWriter(w io.Writer, format byte, dataRecLen byte) (*Writer, error) {
-	if format == FormatAuto || format > Format32Bit ||
-		dataRecLen&(dataRecLen-1) != 0 {
+	if format > Format32Bit || dataRecLen&(dataRecLen-1) != 0 {
 		return nil, ErrArgs
 	}
 	if dataRecLen == 0 {
@@ -122,7 +119,7 @@ func (w *Writer) writeRec(typ byte, addr uint16, data []byte) error {
 func (w *Writer) writeData(buf []byte) error {
 	var err error
 	if segment := w.addr >> 16; segment != w.segment {
-		if w.addr >= sizeLimit(w.format) {
+		if w.addr >= sizeLimits[w.format&3] {
 			return ErrRange
 		}
 		typ, high := extLinearAddrRec, segment
@@ -241,7 +238,7 @@ func (w *Writer) Seek(offset int64, whence int) (int64, error) {
 	default:
 		return w.addr, ErrRange
 	}
-	if offset < 0 || offset > sizeLimit(w.format) {
+	if offset < 0 || offset > sizeLimits[w.format&3] {
 		return w.addr, ErrRange
 	}
 	w.addr = offset
