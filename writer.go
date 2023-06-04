@@ -17,6 +17,7 @@
 package ihex
 
 import (
+	"bufio"
 	"encoding/binary"
 	"io"
 )
@@ -52,7 +53,7 @@ func sizeLimit(format byte) int64 {
 // written in the order in which Writer's methods are called.  After
 // all data are written to the Writer, Close must be called.
 type Writer struct {
-	w          io.Writer        // writer
+	w          *bufio.Writer    // writer
 	addr       int64            // write address
 	segment    int64            // upper 16 bits of addr in last Data record written
 	end        int64            // topmost address written + 1
@@ -79,8 +80,11 @@ func NewWriter(w io.Writer, format byte, dataRecLen byte) (*Writer, error) {
 	if dataRecLen == 0 {
 		dataRecLen = defaultDataLen
 	}
-	xw := Writer{w: w, format: format, dataRecLen: int(dataRecLen)}
-	return &xw, nil
+	return &Writer{
+		w:          bufio.NewWriter(w),
+		format:     format,
+		dataRecLen: int(dataRecLen),
+	}, nil
 }
 
 // writeRec writes a record of type typ.
@@ -98,14 +102,18 @@ func (w *Writer) writeRec(typ byte, addr uint16, data []byte) error {
 	for _, v := range data {
 		sum += v
 	}
-	w.line[n] = ':'
+	line := w.line[:]
+	if sz := len(data)*2 + (len(w.head)*2 + 4); w.w.Available() >= sz {
+		line = w.w.AvailableBuffer()[:sz]
+	}
+	line[n] = ':'
 	n++
-	n += hexEncode(w.line[n:], w.head[:])
-	n += hexEncode(w.line[n:], data)
-	n += hexEncodeByte(w.line[n:], -sum)
-	w.line[n] = '\n'
+	n += hexEncode(line[n:], w.head[:])
+	n += hexEncode(line[n:], data)
+	n += hexEncodeByte(line[n:], -sum)
+	line[n] = '\n'
 	n++
-	_, err := w.w.Write(w.line[:n])
+	_, err := w.w.Write(line[:n])
 	return err
 }
 
@@ -253,5 +261,8 @@ func (w *Writer) Close() error {
 	if err := w.flush(); err != nil {
 		return err
 	}
-	return w.writeRec(eofRec, 0, nil)
+	if err := w.writeRec(eofRec, 0, nil); err != nil {
+		return err
+	}
+	return w.w.Flush()
 }
