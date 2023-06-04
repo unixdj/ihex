@@ -22,22 +22,21 @@ import (
 )
 
 // parser is an IHEX parser.  Format is set in ix, which also holds
-// the result of parsing.  segment is zero for 8-bit format, Segment
-// Base Address for 16-bit and Upper Linear Base Address for 32-bit.
+// the result of parsing.  base is zero for 8-bit format, Segment Base
+// Address for 16-bit and Upper Linear Base Address for 32-bit.
 type parser struct {
-	ix      *IHex         // result
-	segment uint16        // Segment or Upper Linear Base Address
-	head    [dataOff]byte // header buffer
-	data    []byte        // data buffer
+	ix   *IHex         // result
+	base uint16        // Segment or Upper Linear Base Address
+	head [dataOff]byte // header buffer
+	data []byte        // data buffer
 }
 
-// fullAddr returns the full address composed from p.segment and
-// addr.
+// fullAddr returns the full address composed from p.base and addr.
 func (p *parser) fullAddr(addr uint16) uint32 {
 	if p.ix.Format == Format16Bit {
-		return (uint32(p.segment)<<4 + uint32(addr)) & (1<<20 - 1)
+		return (uint32(p.base)<<4 + uint32(addr)) & (1<<20 - 1)
 	}
-	return uint32(p.segment)<<16 | uint32(addr)
+	return uint32(p.base)<<16 | uint32(addr)
 }
 
 var hexmap = [...]byte{
@@ -124,7 +123,7 @@ func (p *parser) parseLine(s string) error {
 			case p.ix.Format != Format32Bit:
 				aa = p.fullAddr(0)
 				fallthrough
-			case p.segment == 0xffff:
+			case p.base == 0xffff:
 				dd := make([]byte, addr+uint16(len(p.data)))
 				copy(dd, p.data[-addr:])
 				p.ix.Chunks.add(Chunk{aa, dd})
@@ -148,7 +147,7 @@ func (p *parser) parseLine(s string) error {
 		if len(p.data) != 2 {
 			return ErrSyntax
 		}
-		p.segment = binary.BigEndian.Uint16(p.data)
+		p.base = binary.BigEndian.Uint16(p.data)
 	case startSegmentAddrRec:
 		format = Format16Bit
 		fallthrough
@@ -201,8 +200,7 @@ func NewReader(r io.Reader, format byte) (*Reader, error) {
 func NewPadReader(r io.Reader, format byte, padTo int64, gapFill byte) (*Reader, error) {
 	if format > Format32Bit {
 		return nil, ErrArgs
-	}
-	if padTo < 0 || padTo > 1<<32 {
+	} else if padTo < 0 || padTo > 1<<32 {
 		return nil, ErrRange
 	}
 	return &Reader{r: r, format: format, padTo: padTo, gapFill: gapFill},

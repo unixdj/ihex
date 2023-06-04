@@ -53,7 +53,7 @@ func hexEncode(dst, src []byte) int {
 type Writer struct {
 	w          *bufio.Writer    // writer
 	addr       int64            // write address
-	segment    int64            // upper 16 bits of addr in last Data record written
+	upper      uint16           // Upper Linear Base Address or Segment>>12
 	end        int64            // topmost address written + 1
 	dataRecLen int              // bytes per Data record
 	bufLen     int              // bytes in data buffer
@@ -117,23 +117,22 @@ func (w *Writer) writeRec(typ byte, addr uint16, data []byte) error {
 // writeData writes a Data record, possibly preceeded by an
 // Extended Segment/Linear Address record.
 func (w *Writer) writeData(buf []byte) error {
-	var err error
-	if segment := w.addr >> 16; segment != w.segment {
+	if upper := uint16(w.addr >> 16); upper != w.upper {
 		if w.addr >= sizeLimits[w.format&3] {
 			return ErrRange
 		}
-		typ, high := extLinearAddrRec, segment
+		w.upper = upper
+		typ := extLinearAddrRec
 		if w.format == Format16Bit {
 			typ = extSegmentAddrRec
-			high <<= 12
+			upper <<= 12
 		}
-		binary.BigEndian.PutUint16(w.extBuf[:], uint16(high))
-		if err = w.writeRec(typ, 0, w.extBuf[:]); err != nil {
+		binary.BigEndian.PutUint16(w.extBuf[:], upper)
+		if err := w.writeRec(typ, 0, w.extBuf[:]); err != nil {
 			return err
 		}
-		w.segment = segment
 	}
-	if err = w.writeRec(dataRec, uint16(w.addr), buf); err != nil {
+	if err := w.writeRec(dataRec, uint16(w.addr), buf); err != nil {
 		return err
 	}
 	w.addr += int64(len(buf))
@@ -166,8 +165,7 @@ func (w *Writer) Write(buf []byte) (int, error) {
 	}
 	var (
 		n    int
-		mask = w.dataRecLen - 1
-		size = w.dataRecLen - ((int(w.addr) + w.bufLen) & mask)
+		size = -(int(w.addr) + w.bufLen | -w.dataRecLen)
 	)
 	if w.bufLen != 0 && len(buf) >= size {
 		n = size
