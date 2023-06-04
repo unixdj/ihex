@@ -226,6 +226,11 @@ type IHex struct {
 	// address.
 	Start uint32
 
+	// StartSet indicates that Start has been set by
+	// ReadFrom, or should be written by WriteTo even if it's
+	// zero.
+	StartSet bool
+
 	// Chunks are the data written to the address space.
 	Chunks ChunkList
 }
@@ -251,9 +256,9 @@ e.g., a location in flash memory contains conjunction (binary AND) of
 all values written to it since last erase.  If ix.Chunks is non-empty
 before calling ReadFrom, it is normalized to allow interleaving reads
 from several files with direct data manipulation.
-
-If any Start Segment/Linear Address records are encountered, ix.Start
-is set to the value in the last such record.
+If any Start Segment/Linear Address records are encountered,
+ix.StartSet is set to true, and ix.Start to the value in the last such
+record.
 */
 func (ix *IHex) ReadFrom(r io.Reader) error {
 	if ix.Format > Format32Bit {
@@ -285,11 +290,11 @@ func (ix *IHex) ReadFrom(r io.Reader) error {
 	return SyntaxError{Err: ErrSyntax}
 }
 
-// WriteTo writes data from ix to an IHEX file, using a Writer of the
-// format specified by ix.Format (which must not be FormatAuto) and
-// data record length of ix.DataRecLength.  It writes ix.Chunks in
-// order without any normalization.  If ix.Start is not zero, it
-// writes the start address next.
+// WriteTo writes data from ix to an IHEX file, using a Writer with
+// parameters specified by ix.Format ix.DataRecLength.  It writes
+// ix.Chunks in order, flushing the write buffer between Chunks.
+// If ix.StartSet is true or ix.Start is not zero, it then sets the
+// start address.
 func (ix *IHex) WriteTo(w io.Writer) error {
 	xw, err := NewWriter(w, ix.Format, ix.DataRecLen)
 	if err != nil {
@@ -303,7 +308,7 @@ func (ix *IHex) WriteTo(w io.Writer) error {
 			return err
 		}
 	}
-	if ix.Start != 0 {
+	if ix.StartSet || ix.Start != 0 {
 		if err = xw.WriteStart(ix.Start); err != nil {
 			return err
 		}

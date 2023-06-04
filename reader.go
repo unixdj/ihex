@@ -156,6 +156,7 @@ func (p *parser) parseLine(s string) error {
 			return ErrSyntax
 		}
 		p.ix.Start = binary.BigEndian.Uint32(p.data)
+		p.ix.StartSet = true
 	default:
 		return ErrRecord
 	}
