@@ -153,12 +153,7 @@ func (w *Writer) flush() error {
 	return nil
 }
 
-// Write writes data from buf as Data records.  Extended Segment or
-// Linear Address records are generated as needed.  Writes beyond the
-// address space valid for the current format generate an error.  Data
-// are written in chunks of up to the number of bytes set by the
-// dataRecLen argument to NewWriter, never spanning a dataRecLen
-// address boundary.  Writes are buffered as needed.
+// Write writes data from buf to r.  Writes are buffered as needed.
 func (w *Writer) Write(buf []byte) (int, error) {
 	if w.closed {
 		return 0, ErrClosed
@@ -191,12 +186,7 @@ func (w *Writer) Write(buf []byte) (int, error) {
 	return n, nil
 }
 
-// WriteStart sets the start address to addr.  If the format of w is
-// Format32Bit, a Start Linear Address record is generated, setting
-// EIP to addr.  For Format16Bit, the Start Segment Address written
-// sets CS to the high 16 bits of addr and IP to its low 16 bits.
-// Attempting to set a start address for a Format8Bit writer is an
-// error.
+// WriteStart sets the start address to addr.
 func (w *Writer) WriteStart(addr uint32) error {
 	if w.closed {
 		return ErrClosed
@@ -217,10 +207,9 @@ func (w *Writer) WriteStart(addr uint32) error {
 }
 
 // Seek causes the next Write to write data to the specified address
-// in the address space.  Its arguments are compliant with the
-// io.Seeker interface.  If the resulting address is out of the legal
-// address space for w's format, an error is returned.  Seek flushes
-// the write buffer but otherwise does not generate any records.
+// in the address space.  Seek flushes the data buffer, but otherwise
+// does not generate any records.  Seek implements the io.Seeker
+// interface.
 func (w *Writer) Seek(offset int64, whence int) (int64, error) {
 	if w.closed {
 		return 0, ErrClosed
@@ -243,11 +232,10 @@ func (w *Writer) Seek(offset int64, whence int) (int64, error) {
 	return w.addr, nil
 }
 
-// Close flushes data buffers of w and writes an EOF record to the
-// underlying writer.  It may return non-nil if any of the writes
-// fail.  After Close is called, further calls to Close will return
-// nil, and calls to other methods of w will return ErrClosed as an
-// error.
+// Close flushes the data buffer and writes an EOF record to the
+// underlying writer.  After Close is called, further calls to Close
+// will return nil, and calls to other methods of w will return
+// ErrClosed as error.
 func (w *Writer) Close() error {
 	if w.closed {
 		return nil

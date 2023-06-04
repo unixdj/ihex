@@ -18,23 +18,51 @@
 Package ihex implements access to Intel HEX files.
 
 IHEX files consist of records representing instructions for a PROM
-programmer to write data to memory locations (referred to here as "the
-address space") and set certain registers ("the start address"), along
-with record types this package only handles internally (EOF and extended
-addressing).  As these records may appear in a file in any order and
-are defined to have peculiar corner cases, this package only presents
-the user a simplified view of the address space, losing details of a
-particular representation on input and generating conservative output.
-Documentation for (*IHex).ReadFrom describes the abstraction in more
-detail.
+programmer to write data to memory locations (hereby referred to as
+"the address space") and set certain registers ("the start address"),
+along with record types this package only handles internally (EOF and
+extended addressing).  As these records may appear in a file in any
+order and are defined to have peculiar corner cases, this package only
+presents the user with a simplified view of the address space, losing
+details of a particular representation on input and generating
+conservative output.
 
-IHEX files come in three formats.  The format termed "8-bit" has,
-naturally, contiguous 16-bit address space (64KB), "16-bit" format has
-crazy Intel-segmeted 20-bit address space (1MB) and "32-bit" has 32-bit
-(4GB) addressing which is contiguous but the high 16 bits of the address
-are still set separately.  This package only allows Extended Segment
-Address and Start Segment Address records in 16-bit files and Extended
-Linear Address and Start Linear Address records in 32-bit files.
+IHEX files come in three formats.  The format termed "8-bit" or
+"I8HEX" has, naturally, contiguous 16-bit address space (64KB),
+"16-bit"/"I16HEX" has crazy Intel-segmeted 20-bit address space (1MB),
+and "32-bit"/"I32HEX" has 32-bit (4GB) addressing which is contiguous
+but the high 16 bits of the address are still set separately.
+
+
+Input
+
+The parser uses bufio.Scanner, and thus may overread from the
+underlying reader.  It reads the whole file at once until an End of
+File record is encountered, resulting in the address space looking as
+described under (*ChunkList).Normalize.
+
+When the format is FormatAuto, the first record specific to 16-bit or
+32-bit format sets the parser's format accordingly.
+
+The parser rejects records of RECTYP that is unknown or invalid for
+the given format, and records of RECTYP other than Data with non-zero
+LOAD OFFSET.  Due to different semantics of Data records spanning 64KB
+address boundaries in different formats, such records are disallowed
+with FormatAuto (however, one shouldn't expect to encounter them in
+the wild).
+
+
+Output
+
+The writer never generates Data records crossing addresses divisible
+by the given data record length, which must be a power of two and
+defaults to 16.  Writes are buffered until such address boundary is
+reached or a Writer method other than Write is called, causing the
+write buffer to be flushed.  (*IHex).WriteTo calls Writer.Seek before
+each write.
+
+A Writer of Format16Bit only generates Extended Segment Address
+records with the bottom 12 bits set to 0.
 */
 package ihex
 
@@ -93,7 +121,7 @@ type SyntaxError struct {
 var formatName = []string{"unspecified", "I8HEX", "I16HEX", "I32HEX"}
 
 // Error returns the error formatted as one of:
-//     "ihex: <invalid syntax/checksum error> on line <n>"
+//     "ihex: <invalid syntax/invalid record type/checksum error> on line <n>"
 //     "ihex: invalid record for <unspecified/I8HEX/I16HEX/I32HEX> format on line <n>"
 //     "ihex: missing EOF record"
 func (e SyntaxError) Error() string {
@@ -193,7 +221,9 @@ func (cl ChunkList) normal() bool {
 
 // Normalize turns cl into a sorted list of nonadjacent non-zero-legth
 // Chunks representing the address space as it would look after the
-// data in cl would be written to it sequentially.
+// data in cl would be written to it sequentially.  Subsequent writes
+// to a location already written to overwrite whole bytes.
+//
 // Normalize may mutate data in place.
 func (cl *ChunkList) Normalize() {
 	if cl.normal() {
@@ -236,29 +266,17 @@ type IHex struct {
 }
 
 /*
-ReadFrom reads an IHEX file from r, filling ix.  ReadFrom returns nil
-on success, ErrSyntax or ErrChecksum in case of invalid input
-and anything else on read errors.  ReadFrom may overread r.
+ReadFrom reads an IHEX file from r into ix.  ReadFrom returns nil on
+success, ErrArgs if ix.Format is invalid, an error from r on read
+errors or a SyntaxError on invalid input.  ReadFrom may overread r.
 
-ix.Format defines the format of the file being read.  If ReadFrom is
-called with the ix.Format equal to FormatAuto (zero value) and a
-record specific to 16-bit or 32-bit format is encoutered,
-ix.Format is set accordingly.  Due to different semantics of Data records
-spanning 64KB address boundaries, such records are disallowed with
-FormatAuto (however, one shouldn't expect to encounter such records
-the wild).
-
-ix.Chunks is set to a sorted list of nonadjacent contiguous data areas
-representing programmed areas in a (potentially sparse) address space of
-a target machine, with later writes overwriting results of earlier ones.
-This does not necessarily represent the behaviour of actual hardware;
-e.g., a location in flash memory contains conjunction (binary AND) of
-all values written to it since last erase.  If ix.Chunks is non-empty
-before calling ReadFrom, it is normalized to allow interleaving reads
-from several files with direct data manipulation.
-If any Start Segment/Linear Address records are encountered,
+ReadFrom adds the data from r to ix.Chunks, setting it to a list of
+programmed data areas as described under (*ChunkList).Normalize.  Any
+data in the byte arrays underlying Chunks may be overwritten.  If
+Start Segment Address or Start Linear Address records are encountered,
 ix.StartSet is set to true, and ix.Start to the value in the last such
-record.
+record.  If ix.Format is FormatAuto (zero value) and a record specific
+to 16-bit or 32-bit format is encoutered, ix.Format is set accordingly.
 */
 func (ix *IHex) ReadFrom(r io.Reader) error {
 	if ix.Format > Format32Bit {

@@ -79,8 +79,8 @@ func hexDecode(buf []byte, s string) ([]byte, byte, error) {
 }
 
 // parseLine parses an IHEX record and applies it to p.ix.  It returns
-// io.EOF on End Of File record and ErrSyntax or ErrChecksum on
-// invalid input.
+// ErrChecksum, ErrFormat, ErrRecord or ErrSyntax on invalid input and
+// io.EOF on End Of File record.
 func (p *parser) parseLine(s string) error {
 	const dataOffs = 1 + dataOff*2
 	if len(s) < dataOffs+2 || len(s)&1 == 0 || s[0] != ':' {
@@ -168,9 +168,8 @@ func (p *parser) parseLine(s string) error {
 }
 
 // Reader provides a simple interface for reading an IHEX file from an
-// underlying reader.  It reads the whole file by calling
-// (*IHex).ReadFrom on the first Read or ReadStart call.  A slightly
-// more detailed represetation of IHEX file is provided by type IHex.
+// underlying reader.  It reads the whole file at the first Read or
+// ReadStart call.
 //
 // Reader's Read method reads from a contiguous address space spanning
 // from address 0 to the end address, which is normally the address
@@ -289,10 +288,7 @@ func (r *Reader) ReadStart() (uint32, error) {
 }
 
 // Seek causes the next Read to return data from the specified
-// address.  Seek returns ErrRange if whence is invalid or the
-// resulting address is negative.  Seeking to an address beyond the
-// end of the address space represented by r will cause next Read to
-// return ErrRange.  Seek is compatible with io.Seeker.
+// address.  Seek implements the io.Seeker interface.
 func (r *Reader) Seek(offset int64, whence int) (int64, error) {
 	switch whence {
 	case io.SeekStart:
