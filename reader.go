@@ -163,7 +163,7 @@ func (p *parser) parseLine(s string) error {
 	default:
 		return ErrRecord
 	}
-	if p.ix.Format != FormatAuto || p.ix.Format != format {
+	if p.ix.Format != FormatAuto && p.ix.Format != format {
 		return ErrFormat
 	}
 	p.ix.Format = format
