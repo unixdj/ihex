@@ -110,7 +110,7 @@ func (p *parser) parseLine(s string) error {
 	case dataRec:
 		a := p.fullAddr(addr)
 		if addr+uint16(len(p.data))-1 < addr {
-			// For Data records whose data's addresses overflow
+			// For Data records whose data's addresses overflow a
 			// 16-bit register, in 8-bit and 32-bit format the data
 			// are wrapped to zero at the end of the address space
 			// (16- and 32-bit, respectively), and in 16-bit

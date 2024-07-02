@@ -33,8 +33,7 @@ IHEX files come in three formats.  The format termed "8-bit" or
 and "32-bit"/"I32HEX" has 32-bit (4GB) addressing which is contiguous
 but the high 16 bits of the address are still set separately.
 
-
-Input
+# Input
 
 The parser uses bufio.Scanner, and thus may overread from the
 underlying reader.  It reads the whole file at once until an End of
@@ -51,15 +50,14 @@ address boundaries in different formats, such records are disallowed
 with FormatAuto (however, one shouldn't expect to encounter them in
 the wild).
 
-
-Output
+# Output
 
 The writer never generates Data records crossing addresses divisible
 by the given data record length, which must be a power of two and
 defaults to 16.  Writes are buffered until such address boundary is
 reached or a Writer method other than Write is called, causing the
-write buffer to be flushed.  (*IHex).WriteTo calls Writer.Seek before
-each write.
+write buffer to be flushed.  (*IHex).WriteTo calls (*Writer).Seek
+before writing each Chunk.
 
 A Writer of Format16Bit only generates Extended Segment Address
 records with the bottom 12 bits set to 0.
@@ -121,9 +119,10 @@ type SyntaxError struct {
 var formatName = []string{"unspecified", "I8HEX", "I16HEX", "I32HEX"}
 
 // Error returns the error formatted as one of:
-//     "ihex: <invalid syntax/invalid record type/checksum error> on line <n>"
-//     "ihex: invalid record for <unspecified/I8HEX/I16HEX/I32HEX> format on line <n>"
-//     "ihex: missing EOF record"
+//
+//	"ihex: <invalid syntax/invalid record type/checksum error> on line <n>"
+//	"ihex: invalid record for <unspecified/I8HEX/I16HEX/I32HEX> format on line <n>"
+//	"ihex: missing EOF record"
 func (e SyntaxError) Error() string {
 	switch {
 	case e.Line == 0:
@@ -221,8 +220,8 @@ func (cl ChunkList) normal() bool {
 
 // Normalize turns cl into a sorted list of nonadjacent non-zero-legth
 // Chunks representing the address space as it would look after the
-// data in cl would be written to it sequentially.  Subsequent writes
-// to a location already written to overwrite whole bytes.
+// data in cl is written to it sequentially.  Subsequent writes to a
+// location already written to overwrite whole bytes.
 //
 // Normalize may mutate data in place.
 func (cl *ChunkList) Normalize() {
@@ -250,10 +249,9 @@ type IHex struct {
 	DataRecLen byte
 
 	// Start is the "start address".  For 32-bit format it
-	// represents the contents of EIP on 80386, and for
-	// 16-bit, the pair of 16-bit registers CS:IP on 8086.
-	// 8-bit format does not support setting the start
-	// address.
+	// represents the contents of EIP on 80386, and for 16-bit,
+	// the pair of 16-bit registers CS:IP on 8086.  8-bit format
+	// does not support setting the start address.
 	Start uint32
 
 	// StartSet indicates that Start has been set by
@@ -309,7 +307,7 @@ func (ix *IHex) ReadFrom(r io.Reader) error {
 }
 
 // WriteTo writes data from ix to an IHEX file, using a Writer with
-// parameters specified by ix.Format ix.DataRecLength.  It writes
+// parameters specified by ix.Format and ix.DataRecLength.  It writes
 // ix.Chunks in order, flushing the write buffer between Chunks.
 // If ix.StartSet is true or ix.Start is not zero, it then sets the
 // start address.
