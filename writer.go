@@ -28,7 +28,7 @@ const (
 
 	// maximim length of a record as text:
 	// colon, RECLEN + LOAD OFFSET + RECTYP, DATA, CHKSUM, newline
-	maxLineLen = 1 + (dataOff+maxDataLen+1)*2 + 1
+	maxLineLen = 1 + (dataOff+maxDataLen+1)*2 + 2
 
 	hexDigits = "0123456789ABCDEF"
 )
@@ -36,6 +36,7 @@ const (
 var sizeLimits = [...]int64{1 << 16, 1 << 16, 1 << 20, 1 << 32}
 
 func hexEncodeByte(dst []byte, b byte) int {
+	_ = dst[1]
 	dst[0], dst[1] = hexDigits[b>>4], hexDigits[b&0xf]
 	return 2
 }
@@ -86,13 +87,10 @@ func NewWriter(w io.Writer, format byte, dataRecLen byte) (*Writer, error) {
 
 // writeRec writes a record of type typ.
 func (w *Writer) writeRec(typ byte, addr uint16, data []byte) error {
-	var (
-		sum byte
-		n   int
-	)
 	w.head[0] = byte(len(data))
 	binary.BigEndian.PutUint16(w.head[1:], addr)
 	w.head[3] = typ
+	var sum byte
 	for _, v := range w.head {
 		sum += v
 	}
@@ -100,16 +98,17 @@ func (w *Writer) writeRec(typ byte, addr uint16, data []byte) error {
 		sum += v
 	}
 	line := w.line[:]
-	if sz := len(data)*2 + (len(w.head)*2 + 4); w.w.Available() >= sz {
+	if sz := len(data)*2 + len(w.head)*2 + 5; w.w.Available() >= sz {
 		line = w.w.AvailableBuffer()[:sz]
 	}
+	var n int
 	line[n] = ':'
 	n++
 	n += hexEncode(line[n:], w.head[:])
 	n += hexEncode(line[n:], data)
 	n += hexEncodeByte(line[n:], -sum)
-	line[n] = '\n'
-	n++
+	line[n], line[n+1] = '\r', '\n'
+	n += 2
 	_, err := w.w.Write(line[:n])
 	return err
 }
