@@ -108,6 +108,9 @@ func (p *parser) parseLine(s string) error {
 	p.data = p.data[:len(p.data)-1]
 	switch p.head[typeOff] {
 	case dataRec:
+		if len(p.data) == 0 {
+			return nil
+		}
 		a := p.fullAddr(addr)
 		if addr+uint16(len(p.data))-1 < addr {
 			// For Data records whose data's addresses overflow a
