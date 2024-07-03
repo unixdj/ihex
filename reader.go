@@ -39,19 +39,25 @@ func (p *parser) fullAddr(addr uint16) uint32 {
 	return uint32(p.base)<<16 | uint32(addr)
 }
 
-var hexmap = [...]byte{
-	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, // 0x30 - 0x37
-	0x08, 0x09, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, // 0x38 - 0x3f
-	0xff, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0xff, // 0x40 - 0x47
-}
+const xx = 0xff
 
-// hexDigit returns the value of the hexadecimal digit d, or 0xff on
-// error.
-func hexDigit(d byte) byte {
-	if d -= '0'; d < byte(len(hexmap)) {
-		return hexmap[d]
-	}
-	return 0xff
+var hexTable = [256]byte{
+	xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, // 0x00
+	xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, // 0x10
+	xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, // 0x20
+	00, 01, 02, 03, 04, 05, 06, 07, 8, 0x9, xx, xx, xx, xx, xx, xx, // 0x30
+	xx, 10, 11, 12, 13, 14, 15, xx, xx, xx, xx, xx, xx, xx, xx, xx, // 0x40
+	xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, // 0x50
+	xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, // 0x60
+	xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, // 0x70
+	xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, // 0x80
+	xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, // 0x90
+	xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, // 0xa0
+	xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, // 0xb0
+	xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, // 0xc0
+	xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, // 0xd0
+	xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, // 0xe0
+	xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, // 0xf0
 }
 
 // hexDecode returns a slice of bytes decoded from hexadecimal digits
@@ -68,7 +74,7 @@ func hexDecode(buf []byte, s string) ([]byte, byte, error) {
 	}
 	var sum byte
 	for i := range buf {
-		hi, lo := hexDigit(s[i<<1]), hexDigit(s[i<<1+1])
+		hi, lo := hexTable[s[i<<1]], hexTable[s[i<<1+1]]
 		if hi|lo == 0xff {
 			return nil, 0, ErrSyntax
 		}
@@ -261,15 +267,9 @@ func (r *Reader) Read(buf []byte) (int, error) {
 			buf = buf[size:]
 			r.pos += size
 		}
-		size := v.end() - r.pos
-		if size == 0 {
-			continue
-		} else if size > int64(len(buf)) {
-			size = int64(len(buf))
-		}
-		copy(buf[:size], v.Data[r.pos-int64(v.Addr):])
+		size := copy(buf, v.Data[r.pos-int64(v.Addr):])
+		r.pos += int64(size)
 		buf = buf[size:]
-		r.pos += size
 		if len(buf) == 0 {
 			return n, nil
 		}
