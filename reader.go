@@ -21,24 +21,6 @@ import (
 	"io"
 )
 
-// parser is an IHEX parser.  Format is set in ix, which also holds
-// the result of parsing.  base is zero for 8-bit format, Segment Base
-// Address for 16-bit and Upper Linear Base Address for 32-bit.
-type parser struct {
-	ix   *IHex         // result
-	base uint16        // Segment or Upper Linear Base Address
-	head [dataOff]byte // header buffer
-	data []byte        // data buffer
-}
-
-// fullAddr returns the full address composed from p.base and addr.
-func (p *parser) fullAddr(addr uint16) uint32 {
-	if p.ix.Format == Format16Bit {
-		return (uint32(p.base)<<4 + uint32(addr)) & (1<<20 - 1)
-	}
-	return uint32(p.base)<<16 | uint32(addr)
-}
-
 const xx = 0xff
 
 var hexTable = [256]byte{
@@ -84,6 +66,47 @@ func hexDecode(buf []byte, s string) ([]byte, byte, error) {
 	return buf, sum, nil
 }
 
+// parser is an IHEX parser.  Format is set in ix, which also holds
+// the result of parsing.  base is zero for 8-bit format, Segment Base
+// Address for 16-bit and Upper Linear Base Address for 32-bit.
+type parser struct {
+	ix      *IHex         // result
+	mask    uint32        // address mask
+	base    uint32        // Linear or Segment Base Address
+	hiBase  bool          // base is near top of address space
+	segBase bool          // Base Address is Segment
+	head    [dataOff]byte // header buffer
+	data    []byte        // data buffer
+}
+
+// split splits data at at, copying the tail to a new array.
+func split(data []byte, at uint16) ([]byte, []byte) {
+	dd := make([]byte, uint16(len(data))-at)
+	copy(dd, data[at:])
+	return data[:at], dd
+}
+
+// add adds data to the chunks.
+func (p *parser) add(addr uint16, data []byte) []byte {
+	if len(data) != 0 {
+		a := p.base + uint32(addr)
+		if p.hiBase {
+			a &= p.mask
+			// If data overflows the address space, wrap to 0.
+			if (a+uint32(len(data))-1)&p.mask < a {
+				var cc Chunk
+				data, cc.Data = split(data, uint16(-a))
+				p.ix.Chunks.add(cc)
+			}
+		}
+		c := p.ix.Chunks.add(Chunk{a, data})
+		if &c.Data[0] == &data[0] {
+			data = nil
+		}
+	}
+	return data
+}
+
 // parseLine parses an IHEX record and applies it to p.ix.  It returns
 // ErrChecksum, ErrFormat, ErrRecord or ErrSyntax on invalid input and
 // io.EOF on End Of File record.
@@ -117,32 +140,20 @@ func (p *parser) parseLine(s string) error {
 		if len(p.data) == 0 {
 			return nil
 		}
-		a := p.fullAddr(addr)
-		if addr+uint16(len(p.data))-1 < addr {
-			// For Data records whose data's addresses overflow a
-			// 16-bit register, in 8-bit and 32-bit format the data
-			// are wrapped to zero at the end of the address space
-			// (16- and 32-bit, respectively), and in 16-bit
-			// format, at the end of the current segment to the
-			// beginning thereof.
-			var aa uint32
-			switch {
-			case p.ix.Format == FormatAuto:
-				return ErrFormat
-			case p.ix.Format != Format32Bit:
-				aa = p.fullAddr(0)
-				fallthrough
-			case p.base == 0xffff:
-				dd := make([]byte, addr+uint16(len(p.data)))
-				copy(dd, p.data[-addr:])
-				p.ix.Chunks.add(Chunk{aa, dd})
-				p.data = p.data[:-addr]
-			}
+		// If data's addresses overflow a 16-bit register, and the
+		// format is 16-bit or the segment base address is set, wrap
+		// at the end of the current segment to the beginning thereof.
+		// Either part can also wrap at the end of the address space.
+		if p.segBase && addr+uint16(len(p.data))-1 < addr {
+			// If data's addresses overflow a 16-bit register,
+			// in 8-bit and 16-bit formats, or if segment base
+			// address is set, wrap at the end of the current
+			// segment to the beginning thereof.
+			var dd []byte
+			p.data, dd = split(p.data, -addr)
+			p.add(0, dd)
 		}
-		c := p.ix.Chunks.add(Chunk{a, p.data})
-		if &c.Data[0] == &p.data[0] {
-			p.data = nil
-		}
+		p.data = p.add(addr, p.data)
 		return nil
 	case eofRec:
 		if len(p.data) != 0 {
@@ -151,28 +162,45 @@ func (p *parser) parseLine(s string) error {
 		return io.EOF
 	case extSegmentAddrRec:
 		format = Format16Bit
-		fallthrough
+		if len(p.data) != 2 {
+			return ErrSyntax
+		}
+		p.base = uint32(binary.BigEndian.Uint16(p.data)) << 4
+		p.hiBase = p.base+(0xffff+0xff) > p.mask
+		p.segBase = true
+	case startSegmentAddrRec:
+		format = Format16Bit
+		if len(p.data) != 4 {
+			return ErrSyntax
+		}
+		p.ix.StartSegment = binary.BigEndian.Uint32(p.data)
+		p.ix.Start = (p.ix.StartSegment>>16<<4 +
+			p.ix.StartSegment&0x0000ffff) & 0x000fffff
+		p.ix.StartSet = true
 	case extLinearAddrRec:
 		if len(p.data) != 2 {
 			return ErrSyntax
 		}
-		p.base = binary.BigEndian.Uint16(p.data)
-	case startSegmentAddrRec:
-		format = Format16Bit
-		fallthrough
+		p.base = uint32(binary.BigEndian.Uint16(p.data)) << 16
+		p.hiBase = p.base == 0xffff0000
+		p.segBase = false
 	case startLinearAddrRec:
 		if len(p.data) != 4 {
 			return ErrSyntax
 		}
 		p.ix.Start = binary.BigEndian.Uint32(p.data)
 		p.ix.StartSet = true
+		p.ix.StartSegment = 0
 	default:
 		return ErrRecord
 	}
-	if p.ix.Format != FormatAuto && p.ix.Format != format {
+	if p.ix.Format == FormatAuto {
+		if p.ix.InFormat < format {
+			p.ix.InFormat = format
+		}
+	} else if p.ix.Format < format {
 		return ErrFormat
 	}
-	p.ix.Format = format
 	return nil
 }
 
@@ -193,7 +221,6 @@ type Reader struct {
 	err     error     // read error
 	pos     int64     // reader position
 	end     int64     // end address
-	padTo   int64     // pad-to address
 	gapFill byte      // filler byte
 }
 
@@ -209,11 +236,10 @@ func NewReader(r io.Reader, format byte) (*Reader, error) {
 func NewPadReader(r io.Reader, format byte, padTo int64, gapFill byte) (*Reader, error) {
 	if format > Format32Bit {
 		return nil, ErrArgs
-	} else if padTo < 0 || padTo > 1<<32 {
+	} else if padTo < 0 || padTo > sizeLimit[format&3] {
 		return nil, ErrRange
 	}
-	return &Reader{r: r, format: format, padTo: padTo, gapFill: gapFill},
-		nil
+	return &Reader{r: r, format: format, end: padTo, gapFill: gapFill}, nil
 }
 
 // load reads an IHEX file from an underlying reader if it has not yet
@@ -229,10 +255,9 @@ func (r *Reader) load() error {
 		}
 		r.ix = &ix
 		if len(ix.Chunks) != 0 {
-			r.end = ix.Chunks[len(ix.Chunks)-1].end()
-		}
-		if r.end < r.padTo {
-			r.end = r.padTo
+			if e := ix.Chunks[len(ix.Chunks)-1].end(); r.end < e {
+				r.end = e
+			}
 		}
 	}
 	return nil
@@ -251,8 +276,8 @@ func (r *Reader) Read(buf []byte) (int, error) {
 		return 0, ErrRange
 	}
 	n := len(buf)
-	if n > int(r.end-r.pos) {
-		n = int(r.end - r.pos)
+	if rem := int(r.end - r.pos); n > rem {
+		n = rem
 		buf = buf[:n]
 	}
 	for _, v := range r.ix.Chunks[r.ix.Chunks.find(r.pos):] {
@@ -282,12 +307,23 @@ func (r *Reader) Read(buf []byte) (int, error) {
 }
 
 // ReadStart returns the start address, or zero if it has not been
-// set.  ReadStart may return an error from (*IHex).ReadFrom.
+// set.  If the start address is segmented, it's converted to linear.
+// ReadStart may return an error from (*IHex).ReadFrom.
 func (r *Reader) ReadStart() (uint32, error) {
 	if err := r.load(); err != nil {
 		return 0, err
 	}
 	return r.ix.Start, nil
+}
+
+// ReadStartSegment returns the start segment address, or zero if it
+// has not been set.  ReadStartSegment may return an error from
+// (*IHex).ReadFrom.
+func (r *Reader) ReadStartSegment() (uint32, error) {
+	if err := r.load(); err != nil {
+		return 0, err
+	}
+	return r.ix.StartSegment, nil
 }
 
 // Seek causes the next Read to return data from the specified

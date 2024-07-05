@@ -27,15 +27,12 @@ const (
 	maxDataLen     = 0x80 // maximum data bytes per Data record generated
 
 	// maximim length of a record as text:
-	// colon, RECLEN + LOAD OFFSET + RECTYP, DATA, CHKSUM, newline
+	// colon, RECLEN + LOAD OFFSET + RECTYP, DATA, CHKSUM, CR/LF
 	maxLineLen = 1 + (dataOff+maxDataLen+1)*2 + 2
-
-	hexDigits = "0123456789ABCDEF"
 )
 
-var sizeLimits = [...]int64{1 << 16, 1 << 16, 1 << 20, 1 << 32}
-
 func hexEncodeByte(dst []byte, b byte) int {
+	const hexDigits = "0123456789ABCDEF"
 	_ = dst[1]
 	dst[0], dst[1] = hexDigits[b>>4], hexDigits[b&0xf]
 	return 2
@@ -54,10 +51,11 @@ func hexEncode(dst, src []byte) int {
 type Writer struct {
 	w          *bufio.Writer    // writer
 	addr       int64            // write address
-	upper      uint16           // Upper Linear Base Address or Segment>>12
 	end        int64            // topmost address written + 1
+	limit      int64            // size of address space
 	dataRecLen int              // bytes per Data record
 	bufLen     int              // bytes in data buffer
+	upper      uint16           // Upper Linear Base Address or Segment>>12
 	format     byte             // format
 	closed     bool             // closed?
 	extBuf     [2]byte          // extended address buffer
@@ -81,6 +79,7 @@ func NewWriter(w io.Writer, format byte, dataRecLen byte) (*Writer, error) {
 	return &Writer{
 		w:          bufio.NewWriter(w),
 		format:     format,
+		limit:      sizeLimit[format&3],
 		dataRecLen: int(dataRecLen),
 	}, nil
 }
@@ -117,7 +116,7 @@ func (w *Writer) writeRec(typ byte, addr uint16, data []byte) error {
 // Extended Segment/Linear Address record.
 func (w *Writer) writeData(buf []byte) error {
 	if upper := uint16(w.addr >> 16); upper != w.upper {
-		if w.addr >= sizeLimits[w.format&3] {
+		if w.addr >= w.limit {
 			return ErrRange
 		}
 		w.upper = upper
@@ -143,13 +142,12 @@ func (w *Writer) writeData(buf []byte) error {
 
 // flush flushes the write buffer.
 func (w *Writer) flush() error {
+	var err error
 	if w.bufLen != 0 {
-		if err := w.writeData(w.buf[:w.bufLen]); err != nil {
-			return err
-		}
+		err = w.writeData(w.buf[:w.bufLen])
 		w.bufLen = 0
 	}
-	return nil
+	return err
 }
 
 // Write writes data from buf to r.  Writes are buffered as needed.
@@ -162,12 +160,12 @@ func (w *Writer) Write(buf []byte) (int, error) {
 		size = -(int(w.addr) + w.bufLen | -w.dataRecLen)
 	)
 	if w.bufLen != 0 && len(buf) >= size {
-		n = size
-		w.bufLen += copy(w.buf[w.bufLen:], buf[:n])
-		buf = buf[n:]
+		w.bufLen += copy(w.buf[w.bufLen:], buf[:size])
+		buf = buf[size:]
 		if err := w.flush(); err != nil {
 			return 0, err
 		}
+		n = size
 		size = w.dataRecLen
 	}
 	for len(buf) >= size {
@@ -185,24 +183,41 @@ func (w *Writer) Write(buf []byte) (int, error) {
 	return n, nil
 }
 
-// WriteStart sets the start address to addr.
-func (w *Writer) WriteStart(addr uint32) error {
-	if w.closed {
-		return ErrClosed
+// writeStart sets the start address to addr.
+func (w *Writer) writeStart(addr uint32, typ byte) error {
+	if w.format == Format8Bit {
+		return ErrFormat
 	} else if err := w.flush(); err != nil {
 		return err
 	}
-	var typ byte
-	switch w.format {
-	case Format16Bit:
-		typ = startSegmentAddrRec
-	case Format32Bit:
-		typ = startLinearAddrRec
-	default:
-		return ErrFormat
-	}
 	binary.BigEndian.PutUint32(w.buf[:], addr)
 	return w.writeRec(typ, 0, w.buf[:4])
+}
+
+// WriteStart sets the start linear address in 32-bit files or start
+// segment address in 16-bit files.  WriteStart returns ErrFormat if
+// the format is Format8Bit, and ErrStart if the format is Format16Bit
+// and addr is wider than 20 bit.
+func (w *Writer) WriteStart(addr uint32) error {
+	var typ byte = startLinearAddrRec
+	if w.closed {
+		return ErrClosed
+	} else if w.format == Format16Bit {
+		if addr&0xfff00000 != 0 {
+			return ErrStart
+		}
+		addr = addr&0xffff0000<<12 | addr&0x0000ffff
+		typ = startSegmentAddrRec
+	}
+	return w.writeStart(addr, typ)
+}
+
+// WriteStartSegment sets the start segment address to addr.
+func (w *Writer) WriteStartSegment(addr uint32) error {
+	if w.closed {
+		return ErrClosed
+	}
+	return w.writeStart(addr, startLinearAddrRec)
 }
 
 // Seek causes the next Write to write data to the specified address
@@ -224,7 +239,7 @@ func (w *Writer) Seek(offset int64, whence int) (int64, error) {
 	default:
 		return w.addr, ErrRange
 	}
-	if offset < 0 || offset > sizeLimits[w.format&3] {
+	if offset < 0 || offset > w.limit {
 		return w.addr, ErrRange
 	}
 	w.addr = offset
