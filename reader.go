@@ -45,7 +45,7 @@ var hexTable = [256]byte{
 // hexDecode returns a slice of bytes decoded from hexadecimal digits
 // in s and their sum.  If buf's capacity is sufficient, it's used for
 // storage.
-func hexDecode(buf []byte, s string) ([]byte, byte, error) {
+func hexDecode(buf []byte, s []byte) ([]byte, byte, error) {
 	if sz := len(s) >> 1; cap(buf) < sz {
 		buf = make([]byte, sz)
 	} else {
@@ -110,7 +110,7 @@ func (p *parser) add(addr uint16, data []byte) []byte {
 // parseLine parses an IHEX record and applies it to p.ix.  It returns
 // ErrChecksum, ErrFormat, ErrRecord or ErrSyntax on invalid input and
 // io.EOF on End Of File record.
-func (p *parser) parseLine(s string) error {
+func (p *parser) parseLine(s []byte) error {
 	const dataOffs = 1 + dataOff*2
 	if len(s) < dataOffs+2 || len(s)&1 == 0 || s[0] != ':' {
 		return ErrSyntax

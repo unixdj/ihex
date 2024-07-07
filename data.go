@@ -326,7 +326,7 @@ func (ix *IHex) ReadFrom(r io.Reader) error {
 	ix.Chunks.Normalize()
 	for s.Scan() {
 		line++
-		if err := p.parseLine(s.Text()); err != nil {
+		if err := p.parseLine(s.Bytes()); err != nil {
 			if err == io.EOF {
 				return nil
 			}
