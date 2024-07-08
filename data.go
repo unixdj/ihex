@@ -48,9 +48,9 @@ The parser uses one Base Address, whose value and type is set by the
 most recent Extended Segment Address or Extended Linear Address
 record.  The initial zero base is a Segment Base Address with 16-bit
 input and Linear otherwise.  When the base is Segment, Data records
-spanning segment boundaries are wrapped at the end of the segment to
-the beginning thereof.  Data past the end of the address space are
-wrapped to zero.
+spanning segment boundaries are wrapped around at the end of the
+segment to the beginning thereof.  Data past the end of the address
+space are wrapped around to zero.
 
 A Start Linear Address record sets the start address to its value.
 Start Segment Address sets it to the absolute value, losing the detail
@@ -171,24 +171,21 @@ func (c Chunk) overlaps(cc Chunk) bool {
 // over and under, the former taking the precedence over the latter.
 // over may overwrite data in the Chunks.
 func (over Chunk) over(under Chunk) Chunk {
+	oend, uend := over.end(), under.end()
 	switch {
-	case int64(over.Addr) == under.end(): // optimise common case
-		under.Data = append(under.Data, over.Data...)
-		return under
-	case over.Addr <= under.Addr && over.end() >= under.end():
+	case over.Addr <= under.Addr:
+		if oend < uend {
+			over.Data = append(over.Data,
+				under.Data[oend-int64(under.Addr):]...)
+		}
 		return over
-	case over.Addr < under.Addr:
-		over.Data = append(over.Data,
-			under.Data[over.end()-int64(under.Addr):]...)
-		return over
-	case over.end() > under.end():
+	case oend > uend:
 		under.Data = append(under.Data[:over.Addr-under.Addr],
 			over.Data...)
-		return under
 	default:
 		copy(under.Data[over.Addr-under.Addr:], over.Data)
-		return under
 	}
+	return under
 }
 
 // ChunkList is a slice of Chunks.
@@ -206,6 +203,13 @@ func (cl ChunkList) find(addr int64) int {
 func (cl *ChunkList) add(c Chunk) Chunk {
 	if len(c.Data) == 0 {
 		return c
+	}
+	if len(*cl) != 0 {
+		if cc := &(*cl)[len(*cl)-1]; cc.end() == int64(c.Addr) {
+			// optimise common case
+			cc.Data = append(cc.Data, c.Data...)
+			return *cc
+		}
 	}
 	if i := cl.find(int64(c.Addr)); i == len(*cl) {
 		*cl = append(*cl, c)

@@ -55,7 +55,7 @@ type Writer struct {
 	limit      int64            // size of address space
 	dataRecLen int              // bytes per Data record
 	bufLen     int              // bytes in data buffer
-	upper      uint16           // Upper Linear Base Address or Segment>>12
+	upper      uint16           // Upper Segment/Linear Base Address
 	format     byte             // format
 	closed     bool             // closed?
 	extBuf     [2]byte          // extended address buffer
@@ -86,9 +86,9 @@ func NewWriter(w io.Writer, format byte, dataRecLen byte) (*Writer, error) {
 
 // writeRec writes a record of type typ.
 func (w *Writer) writeRec(typ byte, addr uint16, data []byte) error {
-	w.head[0] = byte(len(data))
-	binary.BigEndian.PutUint16(w.head[1:], addr)
-	w.head[3] = typ
+	w.head[lenOff] = byte(len(data))
+	binary.BigEndian.PutUint16(w.head[addrOff:], addr)
+	w.head[typeOff] = typ
 	var sum byte
 	for _, v := range w.head {
 		sum += v
@@ -96,9 +96,9 @@ func (w *Writer) writeRec(typ byte, addr uint16, data []byte) error {
 	for _, v := range data {
 		sum += v
 	}
-	line := w.line[:]
-	if sz := len(data)*2 + len(w.head)*2 + 5; w.w.Available() >= sz {
-		line = w.w.AvailableBuffer()[:sz]
+	line := w.w.AvailableBuffer()
+	if line = line[:cap(line)]; cap(line) < len(data)*2+dataOff*2+5 {
+		line = w.line[:]
 	}
 	var n int
 	line[n] = ':'

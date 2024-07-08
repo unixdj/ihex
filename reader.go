@@ -43,7 +43,7 @@ var hexTable = [256]byte{
 }
 
 // hexDecode returns a slice of bytes decoded from hexadecimal digits
-// in s and their sum.  If buf's capacity is sufficient, it's used for
+// in s and their sum.  If buf has sufficient capacity, it's used for
 // storage.
 func hexDecode(buf []byte, s []byte) ([]byte, byte, error) {
 	if sz := len(s) >> 1; cap(buf) < sz {
@@ -79,21 +79,18 @@ type parser struct {
 	data    []byte        // data buffer
 }
 
-// split splits data at at, copying the tail to a new array.
+// split splits data at at, capping the head.
 func split(data []byte, at uint16) ([]byte, []byte) {
-	dd := make([]byte, uint16(len(data))-at)
-	copy(dd, data[at:])
-	return data[:at], dd
+	return data[:at:at], data[at:]
 }
 
 // add adds data to the chunks.
 func (p *parser) add(addr uint16, data []byte) []byte {
 	if len(data) != 0 {
-		a := p.base + uint32(addr)
+		a := (p.base + uint32(addr)) & p.mask
 		if p.hiBase {
-			a &= p.mask
 			// If data overflows the address space, wrap to 0.
-			if (a+uint32(len(data))-1)&p.mask < a {
+			if uint32(-len(data))&p.mask < a {
 				var cc Chunk
 				data, cc.Data = split(data, uint16(-a))
 				p.ix.Chunks.add(cc)
@@ -109,14 +106,15 @@ func (p *parser) add(addr uint16, data []byte) []byte {
 
 // parseLine parses an IHEX record and applies it to p.ix.  It returns
 // ErrChecksum, ErrFormat, ErrRecord or ErrSyntax on invalid input and
-// io.EOF on End Of File record.
+// io.EOF on End of File record.
 func (p *parser) parseLine(s []byte) error {
 	const dataOffs = 1 + dataOff*2
 	if len(s) < dataOffs+2 || len(s)&1 == 0 || s[0] != ':' {
 		return ErrSyntax
 	}
+
+	// parse the record, verify CHKSUM
 	var (
-		format     = byte(Format32Bit)
 		hsum, dsum byte
 		err        error
 	)
@@ -128,78 +126,71 @@ func (p *parser) parseLine(s []byte) error {
 	}
 	if hsum+dsum != 0 {
 		return ErrChecksum
-	}
-	addr := binary.BigEndian.Uint16(p.head[addrOff:])
-	if p.head[typeOff] != dataRec && addr != 0 ||
-		len(p.data) != int(p.head[lenOff])+1 {
+	} else if len(p.data) != int(p.head[lenOff])+1 {
 		return ErrSyntax
 	}
 	p.data = p.data[:len(p.data)-1]
-	switch p.head[typeOff] {
-	case dataRec:
-		if len(p.data) == 0 {
-			return nil
-		}
-		// If data's addresses overflow a 16-bit register, and the
-		// format is 16-bit or the segment base address is set, wrap
-		// at the end of the current segment to the beginning thereof.
-		// Either part can also wrap at the end of the address space.
-		if p.segBase && addr+uint16(len(p.data))-1 < addr {
-			// If data's addresses overflow a 16-bit register,
-			// in 8-bit and 16-bit formats, or if segment base
-			// address is set, wrap at the end of the current
-			// segment to the beginning thereof.
-			var dd []byte
-			p.data, dd = split(p.data, -addr)
-			p.add(0, dd)
-		}
-		p.data = p.add(addr, p.data)
-		return nil
-	case eofRec:
+	addr := binary.BigEndian.Uint16(p.head[addrOff:])
+	typ := p.head[typeOff]
+
+	// handle Data record
+	if typ == dataRec {
 		if len(p.data) != 0 {
-			return ErrSyntax
+			// If data goes past the end of the segment, and the
+			// format is 16-bit or the segment base address is
+			// set, wrap at the segment boundary.  Either part
+			// can also wrap at the end of the address space.
+			if p.segBase && uint16(-len(p.data)) < addr {
+				var dd []byte
+				p.data, dd = split(p.data, -addr)
+				p.add(0, dd)
+			}
+			p.data = p.add(addr, p.data)
 		}
-		return io.EOF
-	case extSegmentAddrRec:
-		format = Format16Bit
-		if len(p.data) != 2 {
-			return ErrSyntax
-		}
-		p.base = uint32(binary.BigEndian.Uint16(p.data)) << 4
-		p.hiBase = p.base+(0xffff+0xff) > p.mask
-		p.segBase = true
-	case startSegmentAddrRec:
-		format = Format16Bit
-		if len(p.data) != 4 {
-			return ErrSyntax
-		}
-		p.ix.StartSegment = binary.BigEndian.Uint32(p.data)
-		p.ix.Start = (p.ix.StartSegment>>16<<4 +
-			p.ix.StartSegment&0x0000ffff) & 0x000fffff
-		p.ix.StartSet = true
-	case extLinearAddrRec:
-		if len(p.data) != 2 {
-			return ErrSyntax
-		}
-		p.base = uint32(binary.BigEndian.Uint16(p.data)) << 16
-		p.hiBase = p.base == 0xffff0000
-		p.segBase = false
-	case startLinearAddrRec:
-		if len(p.data) != 4 {
-			return ErrSyntax
-		}
-		p.ix.Start = binary.BigEndian.Uint32(p.data)
-		p.ix.StartSet = true
-		p.ix.StartSegment = 0
-	default:
-		return ErrRecord
+		return nil
 	}
-	if p.ix.Format == FormatAuto {
+
+	// check RECTYP, RECLEN and LOAD OFFSET, handle End of File record
+	const reclen = "\x00\x00\x02\x04\x02\x04"
+	if int(typ) >= len(reclen) {
+		return ErrRecord
+	} else if p.head[lenOff] != reclen[typ] || addr != 0 {
+		return ErrSyntax
+	} else if typ == eofRec {
+		return io.EOF
+	}
+
+	// handle other record types.  check format.
+	if format := Format16Bit + typ>>2; p.ix.Format == FormatAuto {
 		if p.ix.InFormat < format {
 			p.ix.InFormat = format
 		}
 	} else if p.ix.Format < format {
 		return ErrFormat
+	}
+	var n uint32
+	for _, v := range p.data {
+		n = n<<8 | uint32(v)
+	}
+	switch typ {
+	case extSegmentAddrRec:
+		p.base = n << 4
+		p.hiBase = p.base+(0xffff+0xff) > p.mask
+		p.segBase = true
+	case startSegmentAddrRec:
+		p.ix.StartSegment = n
+		p.ix.Start = (n>>16<<4 + n&0x0000ffff) & 0x000fffff
+		p.ix.StartSet = true
+	case extLinearAddrRec:
+		p.base = n << 16
+		p.hiBase = p.base == 0xffff0000
+		p.segBase = false
+	case startLinearAddrRec:
+		p.ix.Start = n
+		p.ix.StartSegment = 0
+		p.ix.StartSet = true
+	default:
+		return ErrRecord
 	}
 	return nil
 }
@@ -242,8 +233,8 @@ func NewPadReader(r io.Reader, format byte, padTo int64, gapFill byte) (*Reader,
 	return &Reader{r: r, format: format, end: padTo, gapFill: gapFill}, nil
 }
 
-// load reads an IHEX file from an underlying reader if it has not yet
-// been read.
+// load reads an IHEX file from the underlying reader if it has not
+// yet been read.
 func (r *Reader) load() error {
 	if r.err != nil {
 		return r.err
@@ -264,8 +255,8 @@ func (r *Reader) load() error {
 }
 
 // Read reads from the address space represented by r.  Read returns
-// io.EOF at the end of address space, ErrRange out of the address
-// space or an error from (*IHex).ReadFrom on syntax or read errors.
+// io.EOF at the end of address space or ErrRange out of the address
+// space.
 func (r *Reader) Read(buf []byte) (int, error) {
 	if err := r.load(); err != nil {
 		return 0, err
@@ -289,8 +280,8 @@ func (r *Reader) Read(buf []byte) (int, error) {
 			for i := range buf[:size] {
 				buf[i] = r.gapFill
 			}
-			buf = buf[size:]
 			r.pos += size
+			buf = buf[size:]
 		}
 		size := copy(buf, v.Data[r.pos-int64(v.Addr):])
 		r.pos += int64(size)
@@ -308,7 +299,6 @@ func (r *Reader) Read(buf []byte) (int, error) {
 
 // ReadStart returns the start address, or zero if it has not been
 // set.  If the start address is segmented, it's converted to linear.
-// ReadStart may return an error from (*IHex).ReadFrom.
 func (r *Reader) ReadStart() (uint32, error) {
 	if err := r.load(); err != nil {
 		return 0, err
@@ -317,8 +307,7 @@ func (r *Reader) ReadStart() (uint32, error) {
 }
 
 // ReadStartSegment returns the start segment address, or zero if it
-// has not been set.  ReadStartSegment may return an error from
-// (*IHex).ReadFrom.
+// has not been set.
 func (r *Reader) ReadStartSegment() (uint32, error) {
 	if err := r.load(); err != nil {
 		return 0, err
