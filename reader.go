@@ -205,8 +205,8 @@ func (p *parser) parseLine(s []byte) error {
 }
 
 // Reader provides a simple interface for reading an IHEX file from an
-// underlying reader.  It reads the whole file at the first Read or
-// ReadStart call.
+// underlying reader.  It reads the whole file at the first Read,
+// ReadStart, ReadStartSegment or Seek call.
 //
 // Reader's Read method reads from a contiguous address space spanning
 // from address 0 to the end address, which is normally the address
@@ -329,6 +329,9 @@ func (r *Reader) ReadStartSegment() (uint32, error) {
 // Seek causes the next Read to return data from the specified
 // address.  Seek implements the io.Seeker interface.
 func (r *Reader) Seek(offset int64, whence int) (int64, error) {
+	if err := r.load(); err != nil {
+		return 0, err
+	}
 	switch whence {
 	case io.SeekStart:
 	case io.SeekCurrent:
