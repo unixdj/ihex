@@ -217,7 +217,7 @@ func (w *Writer) WriteStartSegment(addr uint32) error {
 	if w.closed {
 		return ErrClosed
 	}
-	return w.writeStart(addr, startLinearAddrRec)
+	return w.writeStart(addr, startSegmentAddrRec)
 }
 
 // Seek causes the next Write to write data to the specified address
